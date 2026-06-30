@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --background: #1a1408;
+  --foreground: #f0e8d0;
+  --card: #221c0e;
+  --card-foreground: #f0e8d0;
+  --popover: #221c0e;
+  --popover-foreground: #f0e8d0;
+  --primary: #c9a84c;
+  --primary-foreground: #1a1408;
+  --secondary: #2e2410;
+  --secondary-foreground: #e8d9b0;
+  --muted: #2a2010;
+  --muted-foreground: #c2b69a;
+  --accent: #c9a84c;
+  --accent-foreground: #1a1408;
+  --destructive: #8b2020;
+  --destructive-foreground: #f0e8d0;
+  --border: rgba(201, 168, 76, 0.2);
+  --input: #2e2410;
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: 'EB Garamond', Georgia, serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Cinzel', serif;
+    letter-spacing: 0.05em;
+  }
+}
+
+/* Custom Scrollbar for Luxury Theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #1a1408;
+}
+::-webkit-scrollbar-thumb {
+  background: #2e2410;
+  border: 1px solid rgba(201, 168, 76, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c9a84c;
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+
+.animate-wiggle {
+  animation: wiggle 5s ease-in-out infinite;
+}
+
