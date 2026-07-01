@@ -1,41 +1,68 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { collection, onSnapshot, addDoc } from "firebase/firestore";
+import { db } from "../firebase";
+import { askLegalQuestion } from "../ai";
 import { Briefcase, Calendar, Clock, FileText, Search, User, ChevronRight, Plus, Upload, Activity } from "lucide-react";
 
-export function ChamberDashboard({ currentRole = "Senior", language = "en" }: { currentRole?: string; language?: string }) {
+export function ChamberDashboard({ currentRole = "Senior", language = "en", userName = null, onNavigate }: { currentRole?: string; language?: string; userName?: string | null; onNavigate?: (view: string) => void }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [aiResponse, setAiResponse] = useState("");
+  const [isAskingAi, setIsAskingAi] = useState(false);
 
-  const MOCK_HEARINGS = [
-    {
-      id: "h1",
-      caseNo: "WP(C) No. 29769/2026",
-      title: "Apex Retailers vs State Tax Officer",
-      court: "Kerala High Court",
-      date: "2026-07-02",
-      time: "10:30 AM",
-      itemNo: "24",
-      bench: "Justice K. Harilal"
-    },
-    {
-      id: "h2",
-      caseNo: "WA No. 841/2026",
-      title: "Refex Industries vs Union of India",
-      court: "Madras High Court",
-      date: "2026-07-05",
-      time: "11:45 AM",
-      itemNo: "12",
-      bench: "Chief Justice S.V. Gangapurwala"
-    },
-    {
-      id: "h3",
-      caseNo: "WP(C) No. 1105/2026",
-      title: "Zenith Tech vs Assistant Commissioner",
-      court: "Delhi High Court",
-      date: "2026-07-12",
-      time: "02:15 PM",
-      itemNo: "38",
-      bench: "Justice Yashwant Varma"
+  const [hearings, setHearings] = useState<any[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "hearings"), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHearings(data);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const seedMockHearings = async () => {
+    const mockHearings = [
+      {
+        caseNo: "WP(C) No. 29769/2026",
+        title: "Apex Retailers vs State Tax Officer",
+        court: "Kerala High Court",
+        date: "2026-07-02",
+        time: "10:30 AM",
+        itemNo: "24",
+        bench: "Justice K. Harilal"
+      },
+      {
+        caseNo: "WA No. 841/2026",
+        title: "Refex Industries vs Union of India",
+        court: "Madras High Court",
+        date: "2026-07-05",
+        time: "11:45 AM",
+        itemNo: "12",
+        bench: "Chief Justice S.V. Gangapurwala"
+      },
+      {
+        caseNo: "WP(C) No. 1105/2026",
+        title: "Zenith Tech vs Assistant Commissioner",
+        court: "Delhi High Court",
+        date: "2026-07-12",
+        time: "02:15 PM",
+        itemNo: "38",
+        bench: "Justice Yashwant Varma"
+      }
+    ];
+    for (const h of mockHearings) {
+      await addDoc(collection(db, "hearings"), h);
     }
-  ];
+  };
+
+  const handleAskAI = async () => {
+    if (!searchQuery.trim()) return;
+    setIsAskingAi(true);
+    setAiResponse("Vakeel AI is analyzing your query...");
+    
+    const response = await askLegalQuestion(searchQuery);
+    setAiResponse(response);
+    setIsAskingAi(false);
+  };
 
   const MOCK_ACTIVITIES = [
     {
@@ -203,7 +230,27 @@ export function ChamberDashboard({ currentRole = "Senior", language = "en" }: { 
   const activeLang = (language && TRANSLATIONS[language as keyof typeof TRANSLATIONS]) ? language : "en";
   const t = TRANSLATIONS[activeLang as keyof typeof TRANSLATIONS];
 
-  const welcomeGreeting = t.hearings[currentRole as keyof typeof t.hearings] || t.hearings.Senior;
+  let welcomeGreeting = t.hearings[currentRole as keyof typeof t.hearings] || t.hearings.Senior;
+  if (userName) {
+    const greetingPrefix = {
+      en: "Good Morning, ",
+      hi: "सुप्रभात, ",
+      ur: "صبح بخیر، ",
+      mr: "शुभ सकाळ, ",
+      bn: "শুভ সকাল, "
+    }[activeLang] || "Good Morning, ";
+    
+    const roleTitle = {
+      en: currentRole === "Senior" || currentRole === "Associate" ? "Advocate " : "",
+      hi: currentRole === "Senior" || currentRole === "Associate" ? "अधिवक्ता " : "",
+      ur: currentRole === "Senior" || currentRole === "Associate" ? "ایڈووکیٹ " : "",
+      mr: currentRole === "Senior" || currentRole === "Associate" ? "अधिवक्ता " : "",
+      bn: currentRole === "Senior" || currentRole === "Associate" ? "অ্যাডভোকেট " : "",
+    }[activeLang] || "";
+
+    welcomeGreeting = `${greetingPrefix}${roleTitle}${userName}`;
+  }
+  
   const welcomeSubtext = t.subtexts[currentRole as keyof typeof t.subtexts] || t.subtexts.Senior;
 
   return (
@@ -219,11 +266,18 @@ export function ChamberDashboard({ currentRole = "Senior", language = "en" }: { 
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          <button className="px-4 py-2 bg-secondary/80 hover:bg-secondary border border-primary/30 text-primary hover:text-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer">
+          <button onClick={seedMockHearings} className="px-4 py-2 bg-secondary/80 hover:bg-secondary border border-primary/30 text-primary hover:text-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer">
+            Seed Data
+          </button>
+          <button 
+            onClick={() => onNavigate && onNavigate("drafting")}
+            className="px-4 py-2 bg-secondary/80 hover:bg-secondary border border-primary/30 text-primary hover:text-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer">
             <Plus size={14} />
             {t.createDraft}
           </button>
-          <button className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer shadow-md">
+          <button 
+            onClick={() => onNavigate && onNavigate("repository")}
+            className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer shadow-md">
             <Upload size={14} />
             {t.uploadDocument}
           </button>
@@ -298,10 +352,26 @@ export function ChamberDashboard({ currentRole = "Senior", language = "en" }: { 
             placeholder={t.placeholder}
             className="flex-1 px-4 py-3 bg-[#130f06] border border-primary/20 focus:border-primary rounded-lg text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none font-sans"
           />
-          <button className="px-6 py-3 bg-primary text-primary-foreground font-bold uppercase tracking-wider rounded-lg hover:bg-primary/95 transition-all text-xs font-mono flex items-center justify-center gap-1.5 cursor-pointer shadow-md animate-pulse">
-            {t.askAi}
+          <button 
+            onClick={handleAskAI}
+            disabled={isAskingAi}
+            className="px-6 py-3 bg-primary text-primary-foreground font-bold uppercase tracking-wider rounded-lg hover:bg-primary/95 transition-all text-xs font-mono flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50">
+            {isAskingAi ? "Processing..." : t.askAi}
           </button>
         </div>
+
+        {aiResponse && (
+          <div className="mt-6 p-6 bg-[#130f06] border border-primary/30 rounded-xl text-left max-w-2xl mx-auto shadow-inner relative">
+            <button onClick={() => setAiResponse("")} className="absolute top-3 right-3 text-muted-foreground hover:text-foreground text-xs font-mono border border-primary/20 px-2 py-1 rounded cursor-pointer">Close</button>
+            <div className="flex items-center gap-2 mb-3 border-b border-primary/15 pb-2">
+              <Activity size={16} className="text-primary" />
+              <h3 className="text-sm font-bold text-primary uppercase tracking-wider">Vakeel AI Analysis</h3>
+            </div>
+            <div className="text-sm text-foreground/90 whitespace-pre-wrap leading-relaxed font-serif">
+              {aiResponse}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom Dual Lists */}
@@ -319,7 +389,8 @@ export function ChamberDashboard({ currentRole = "Senior", language = "en" }: { 
             </button>
           </div>
           <div className="space-y-3">
-            {MOCK_HEARINGS.map((hearing) => (
+            {hearings.length === 0 && <p className="text-xs text-muted-foreground p-3">No hearings in database. Click 'Seed Data' above to add some!</p>}
+            {hearings.map((hearing) => (
               <div key={hearing.id} className="p-3 bg-[#1c160a]/40 border border-primary/10 rounded-lg hover:border-primary/30 transition-all duration-200 text-xs font-mono space-y-2">
                 <div className="flex justify-between items-start gap-2">
                   <span className="font-bold text-foreground">{hearing.caseNo}</span>

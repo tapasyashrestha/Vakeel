@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { db, storage } from "../firebase";
 import { FolderOpen, Search, Eye, Download, Trash, Shield, Lock, FileText, User, Upload } from "lucide-react";
 
 interface ChamberFile {
@@ -9,6 +12,7 @@ interface ChamberFile {
   uploader: string;
   isPrivate: boolean;
   dateAdded: string;
+  url?: string;
 }
 
 interface DocumentRepositoryProps {
@@ -20,7 +24,7 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
   const TRANSLATIONS = {
     en: {
       pageTitle: "CHAMBER DOCUMENT REPOSITORY",
-      pageSub: "Layer 3 · Secure Chamber File System & OCR Index",
+      pageSub: "Secure Chamber File System & OCR Index",
       roleSecurity: "ROLE LEVEL SECURITY ENFORCED",
       searchPlaceholder: "Search documents by name or category...",
       allFiles: "All Files",
@@ -125,54 +129,17 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"All" | "Public" | "Private">("All");
+  const [isUploading, setIsUploading] = useState(false);
 
-  const [files, setFiles] = useState<ChamberFile[]>([
-    {
-      id: "f1",
-      name: "GST_DRC_01_Apex_Retailers.pdf",
-      size: "1.2 MB",
-      type: "SCN Notice",
-      uploader: "Priya Sen (Associate)",
-      isPrivate: false,
-      dateAdded: "2026-06-15"
-    },
-    {
-      id: "f2",
-      name: "Matrix_Logistics_SCN_74.pdf",
-      size: "2.4 MB",
-      type: "SCN Notice",
-      uploader: "Rohan (Intern)",
-      isPrivate: false,
-      dateAdded: "2026-06-20"
-    },
-    {
-      id: "f3",
-      name: "Zenith_India_ITC_Challans.xlsx",
-      size: "480 KB",
-      type: "Client Account Files",
-      uploader: "Priya Sen (Associate)",
-      isPrivate: true,
-      dateAdded: "2026-06-22"
-    },
-    {
-      id: "f4",
-      name: "Apex_Retailers_Billing_Memo.pdf",
-      size: "310 KB",
-      type: "Internal Memo",
-      uploader: "Aditya S (Senior)",
-      isPrivate: true,
-      dateAdded: "2026-06-25"
-    },
-    {
-      id: "f5",
-      name: "CBIC_Circular_183_CA_Cert.pdf",
-      size: "1.8 MB",
-      type: "CBIC Circular",
-      uploader: "System Ingestion",
-      isPrivate: false,
-      dateAdded: "2026-06-01"
-    }
-  ]);
+  const [files, setFiles] = useState<ChamberFile[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, "documents"), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChamberFile));
+      setFiles(data);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const filteredFiles = files.filter((f) => {
     const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -187,13 +154,33 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
     return matchesSearch && isVisibleByRole && matchesTab;
   });
 
-  const handleDelete = (id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "documents", id));
+    } catch (error) {
+      console.error(error);
+    }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTogglePrivacy = async (id: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, "documents", id), {
+        isPrivate: !currentStatus
+      });
+    } catch (error) {
+      console.error(error);
+      alert("Failed to update privacy status.");
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Ask the user if the file should be Private
+    const isPrivate = window.confirm("Make this document Private? (Only Seniors & Associates can view it)\n\nClick OK for Private, or Cancel for Public.");
+
+    setIsUploading(true);
 
     const name = file.name;
     const sizeInMB = (file.size / (1024 * 1024)).toFixed(1);
@@ -210,18 +197,29 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
       docType = "Client Account Files";
     }
 
-    const newFile: ChamberFile = {
-      id: `f-${Date.now()}`,
-      name: name,
-      size: sizeStr,
-      type: docType,
-      uploader: `${currentRole === "Senior" ? "Aditya S" : currentRole === "Associate" ? "Priya Sen" : "Rohan"} (${currentRole})`,
-      isPrivate: activeTab === "Private", // sets private default depending on currently active tab
-      dateAdded: new Date().toISOString().split("T")[0]
-    };
+    try {
+      // PROTOTYPE BYPASS: We are skipping Firebase Storage upload because the project is on the Spark plan 
+      // without a provisioned bucket. We just save the metadata to Firestore so the UI works!
+      const mockDownloadURL = "https://example.com/mock-document.pdf";
 
-    setFiles((prev) => [newFile, ...prev]);
-    alert(`File "${name}" uploaded successfully!`);
+      const newFile = {
+        name: name,
+        size: sizeStr,
+        type: docType,
+        uploader: currentRole,
+        isPrivate: isPrivate,
+        dateAdded: new Date().toISOString().split("T")[0],
+        url: mockDownloadURL
+      };
+      
+      await addDoc(collection(db, "documents"), newFile);
+      alert(`File "${name}" uploaded successfully!`);
+    } catch (error: any) {
+      alert(`Upload failed: ${error.message}`);
+    } finally {
+      setIsUploading(false);
+      e.target.value = ""; // Reset the input to allow uploading the same file again
+    }
   };
 
   return (
@@ -242,19 +240,10 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
             <span className="font-mono text-[#c9a84c] uppercase font-bold tracking-wider">{t.roleSecurity}</span>
           </div>
 
-          {/* Hidden File Input */}
-          <input
-            type="file"
-            id="chamber-file-upload"
-            className="hidden"
-            onChange={handleFileUpload}
-          />
-          <label
-            htmlFor="chamber-file-upload"
-            className="px-4 py-2.5 bg-[#c9a84c] hover:bg-[#c9a84c]/95 text-[#1a1408] font-bold uppercase rounded-lg text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer select-none"
-          >
-            <Upload size={13} />
-            {t.uploadBtn}
+          <label className={`px-4 py-2 bg-[#c9a84c] text-[#1a1408] hover:bg-[#d6b75e] text-[10px] font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 shadow-md cursor-pointer border border-[#c9a84c] ${isUploading ? "opacity-50 cursor-not-allowed" : ""}`}>
+            <Upload size={14} />
+            {isUploading ? "Uploading..." : t.uploadBtn}
+            <input type="file" className="hidden" onChange={handleFileUpload} onClick={(e) => { (e.target as HTMLInputElement).value = '' }} disabled={isUploading} />
           </label>
         </div>
       </div>
@@ -348,16 +337,37 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
                     <td className="p-4">
                       <div className="flex items-center justify-center gap-2">
                         <button
-                          onClick={() => alert(`Opening preview of "${file.name}"...`)}
+                          onClick={() => {
+                            if (file.url) {
+                              window.open(file.url, '_blank');
+                            } else {
+                              alert(`URL not available for "${file.name}"`);
+                            }
+                          }}
                           className="p-1.5 hover:bg-[#130f06] border border-[#c9a84c]/20 hover:border-[#c9a84c] rounded text-[#c9a84c] hover:text-[#f0e8d0] transition-all cursor-pointer"
+                          title="Preview Document"
                         >
                           <Eye size={13} />
                         </button>
                         <button
-                          onClick={() => alert(`Downloading file "${file.name}"...`)}
+                          onClick={() => {
+                            if (file.url) {
+                              window.open(file.url, '_blank');
+                            } else {
+                              alert(`URL not available for "${file.name}"`);
+                            }
+                          }}
                           className="p-1.5 hover:bg-[#130f06] border border-[#c9a84c]/20 hover:border-[#c9a84c] rounded text-[#c9a84c] hover:text-[#f0e8d0] transition-all cursor-pointer"
+                          title="Download Document"
                         >
                           <Download size={13} />
+                        </button>
+                        <button
+                          onClick={() => handleTogglePrivacy(file.id, file.isPrivate)}
+                          className="p-1.5 hover:bg-[#130f06] border border-[#c9a84c]/20 hover:border-[#c9a84c] rounded text-[#c9a84c] hover:text-[#f0e8d0] transition-all cursor-pointer"
+                          title={file.isPrivate ? "Make Public" : "Make Private"}
+                        >
+                          {file.isPrivate ? <FolderOpen size={13} /> : <Lock size={13} />}
                         </button>
                         <button
                           onClick={() => handleDelete(file.id)}

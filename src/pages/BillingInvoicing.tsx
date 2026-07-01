@@ -101,7 +101,7 @@ export function BillingInvoicing() {
             SUBSCRIPTIONS &amp; BILLING
           </h1>
           <p className="text-muted-foreground text-xs font-mono uppercase tracking-wide">
-            Layer 4 · Subscription Plans, Razorpay Gateway &amp; Invoices
+            Subscription Plans, Razorpay Gateway &amp; Invoices
           </p>
         </div>
 

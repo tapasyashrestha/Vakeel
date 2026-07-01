@@ -7,6 +7,7 @@ import { DraftingPanel } from "./pages/DraftingPanel";
 import { DocumentRepository } from "./pages/DocumentRepository";
 import { SmartCalendar } from "./pages/SmartCalendar";
 import { InternDashboard } from "./pages/InternDashboard";
+import { InternWorkspace } from "./pages/InternWorkspace";
 import { SettingsConfiguration } from "./pages/SettingsConfiguration";
 import { BillingInvoicing } from "./pages/BillingInvoicing";
 import type { UserRole } from "./components/RoleSimulator";
@@ -39,6 +40,7 @@ const viewLabels: Record<string, string> = {
   calendar: "Smart Calendar",
   settings: "Settings Configuration",
   billing: "Billing & Invoices",
+  internWorkspace: "Intern Workspace",
 };
 
 const NAVBAR_TRANSLATIONS = {
@@ -105,6 +107,7 @@ export default function App() {
     | "repository"
     | "calendar"
     | "interns"
+    | "internWorkspace"
     | "settings"
     | "billing"
   >("landing");
@@ -118,14 +121,16 @@ export default function App() {
   // Language State
   const [language, setLanguage] = useState<"en" | "hi" | "ur" | "mr" | "bn">("en");
 
-  // Role & RAG Simulator Settings
   const [currentRole, setCurrentRole] = useState<UserRole>("Senior");
+  const [userName, setUserName] = useState<string | null>(null);
   const isDraftDestination = true;
   const routerConfidence = "High";
   const strictSynthesis = true;
 
   const sidebarItems = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    ...(currentRole === "Intern" 
+      ? [{ id: "internWorkspace", label: "Intern Workspace", icon: LayoutDashboard }]
+      : [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }]),
     { id: "workspace", label: "Legal Intelligence", icon: Search },
     { id: "chat", label: "AI Conversation", icon: MessageSquare },
     { id: "drafting", label: "AI Drafting Engine", icon: FileText },
@@ -135,14 +140,18 @@ export default function App() {
   ];
 
   const getProfileData = () => {
+    const initials = userName 
+      ? userName.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()
+      : undefined;
+
     switch (currentRole) {
       case "Senior":
-        return { name: "Advocate Sharma", role: "Senior Partner", initials: "AS" };
+        return { name: userName || "Advocate Sharma", role: "Senior Partner", initials: initials || "AS" };
       case "Associate":
-        return { name: "Advocate Priya Sen", role: "Associate", initials: "PS" };
+        return { name: userName || "Advocate Priya Sen", role: "Associate", initials: initials || "PS" };
       case "Intern":
       default:
-        return { name: "Rohan Kumar", role: "Intern", initials: "RK" };
+        return { name: userName || "Rohan Kumar", role: "Intern", initials: initials || "RK" };
     }
   };
 
@@ -151,8 +160,9 @@ export default function App() {
   if (currentView !== "landing" && !isAuthenticated) {
     return (
       <Login
-        onLoginSuccess={(role) => {
+        onLoginSuccess={(role, name) => {
           setCurrentRole(role);
+          setUserName(name || null);
           setIsAuthenticated(true);
         }}
         onBackToLanding={() => setCurrentView("landing")}
@@ -494,7 +504,7 @@ export default function App() {
                       <Receipt size={15} />
                     </button>
                     <button
-                      onClick={() => { setIsAuthenticated(false); setCurrentView("landing"); setIsSidebarOpen(false); }}
+                      onClick={() => { setIsAuthenticated(false); setCurrentView("landing"); setIsSidebarOpen(false); setUserName(null); }}
                       className="p-1.5 hover:text-destructive hover:bg-secondary/50 rounded transition-colors cursor-pointer"
                       title="Sign Out"
                     >
@@ -542,7 +552,8 @@ export default function App() {
                   language={language}
                 />
               )}
-              {currentView === "dashboard" && <ChamberDashboard currentRole={currentRole} language={language} />}
+              {currentView === "dashboard" && <ChamberDashboard currentRole={currentRole} language={language} userName={userName} onNavigate={setCurrentView} />}
+              {currentView === "internWorkspace" && <InternWorkspace language={language} />}
               {currentView === "chat" && <ChatPortal language={language} />}
               {currentView === "drafting" && <DraftingPanel language={language} />}
               {currentView === "repository" && <DocumentRepository currentRole={currentRole} language={language} />}

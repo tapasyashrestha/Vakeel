@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FileText, Sparkles, Copy, Download } from "lucide-react";
+import { generateLegalDraft } from "../ai";
 
 interface DraftingPanelProps {
   language?: string;
@@ -83,74 +84,18 @@ export function DraftingPanel({ language = "en" }: DraftingPanelProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedDraft, setGeneratedDraft] = useState("");
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setIsGenerating(true);
-    setTimeout(() => {
-      let draftText = "";
-
-      if (docType.includes("Bail")) {
-        draftText = `IN THE COURT OF THE SESSIONS JUDGE AT NEW DELHI\n` +
-          `BAIL APPLICATION NO. ______ OF 2026\n\n` +
-          `IN THE MATTER OF:\n` +
-          `Rahul Kumar\n` +
-          `S/o Sh. Ramesh Kumar\n` +
-          `R/o B-45, Vasant Vihar, New Delhi ... APPLICANT\n\n` +
-          `VERSUS\n` +
-          `State (N.C.T. of Delhi) ... RESPONDENT\n\n` +
-          `APPLICATION UNDER SECTION 438 OF THE CODE OF CRIMINAL PROCEDURE, 1973 FOR GRANT OF ANTICIPATORY BAIL IN FIR NO. 123/2026 UNDER SECTION 420/406 IPC AT P.S. VASANT VIHAR.\n\n` +
-          `MOST RESPECTFULLY SHOWETH:\n` +
-          `1. That the Applicant is a law-abiding citizen of India running a genuine retail manufacturing business, and has been falsely implicated in the above-mentioned FIR due to commercial disputes.\n` +
-          `2. That the dispute in question is purely civil and commercial in nature, arising out of non-payment of invoice values, which the complainant has maliciously sought to color as criminal breach of trust.\n` +
-          `3. That the Applicant has clean precedents and commits to fully cooperate with the ongoing police investigation at all times.\n` +
-          `4. That the Applicant submits that no custodial interrogation is required as the evidence is documentary.\n\n` +
-          `PRAYER:\n` +
-          `It is therefore most respectfully prayed that this Court may be pleased to direct the release of the Applicant on bail in the event of arrest in FIR 123/2026 on such terms as deemed fit.\n\n` +
-          `New Delhi\n` +
-          `Date: ${new Date().toLocaleDateString()}\n\n` +
-          `APPLICANT\n` +
-          `THROUGH\n` +
-          `ADVOCATE S. SHARMA`;
-      } else if (docType.includes("GST")) {
-        draftText = `BEFORE THE APPELLATE AUTHORITY UNDER THE GST ACT, NEW DELHI\n` +
-          `APPEAL NO. ______ / GST / 2026\n\n` +
-          `IN THE MATTER OF:\n` +
-          `M/s Apex Retailers Private Limited ... APPELLANT\n\n` +
-          `VERSUS\n` +
-          `State Tax Officer, Ward 12 ... RESPONDENT\n\n` +
-          `PETITION OF APPEAL UNDER SECTION 107 OF THE CGST ACT AGAINST SCN DRC-01 IN RELATION TO INPUT TAX CREDIT MISMATCH FOR FY 2024-25.\n\n` +
-          `The Appellant respectfully submits as under:\n` +
-          `1. The Appellant challenges the denial of Input Tax Credit on GSTR-2A vs GSTR-3B mismatch grounds.\n` +
-          `2. It is submitted that the Appellant paid the tax values along with purchase prices through official bank RTGS. Credit cannot be denied solely due to supplier delay in uploading filings, as held in Diya Agencies vs STO.\n` +
-          `3. Reconciliations are attached in compliance with CBIC guidelines.\n\n` +
-          `PRAYER:\n` +
-          `The Appellant prays that the demand order be set aside and credit be allowed in full.\n\n` +
-          `APPELLANT`;
-      } else if (docType.includes("Written")) {
-        draftText = `IN THE COURT OF THE CIVIL JUDGE, SAKET COURTS, NEW DELHI\n` +
-          `SUIT NO. ______ OF 2026\n\n` +
-          `IN THE MATTER OF:\n` +
-          `ABC Finance Corp ... PLAINTIFF\n\n` +
-          `VERSUS\n` +
-          `XYZ Retailers ... DEFENDANT\n\n` +
-          `WRITTEN STATEMENT ON BEHALF OF THE DEFENDANT UNDER ORDER VIII RULE 1 OF THE CODE OF CIVIL PROCEDURE.\n\n` +
-          `The Defendant submits as under:\n` +
-          `1. The suit filed by the Plaintiff is not maintainable as it suppresses material facts.\n` +
-          `2. Paragraph 1 of the plaint is denied in as much as no outstanding dues remain payable under the agreement.\n` +
-          `3. The Defendant has duly settled all invoices through digital bank clearance.\n\n` +
-          `DEFENDANT`;
-      } else {
-        draftText = `SUPPLIER & VENDOR SERVICE AGREEMENT\n\n` +
-          `This Agreement is made on this ${new Date().toLocaleDateString()} between:\n` +
-          `1. M/s ABC Manufacturing Co. ... CLIENT\n` +
-          `2. M/s XYZ Logistics Ltd ... CONTRACTOR\n\n` +
-          `TERMS:\n` +
-          `1. The Contractor shall supply transportation services at the rates specified in Schedule A.\n` +
-          `2. Disputes shall be referred to Arbitration under the Arbitration and Conciliation Act. The seat of Arbitration shall be New Delhi.`;
-      }
-
-      setGeneratedDraft(draftText);
-      setIsGenerating(false);
-    }, 1500);
+    setGeneratedDraft("Vakeel AI is drafting the document. Please wait...");
+    
+    const draftText = await generateLegalDraft(
+      context || "Generic Client",
+      docType,
+      `Context: ${context}\nTone: ${tone}`
+    );
+    
+    setGeneratedDraft(draftText);
+    setIsGenerating(false);
   };
 
   const handleCopy = () => {
@@ -159,7 +104,20 @@ export function DraftingPanel({ language = "en" }: DraftingPanelProps) {
   };
 
   const handleExport = () => {
-    alert("Word Document (.docx) export triggered.");
+    if (!generatedDraft) return;
+    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title></head><body>";
+    const footer = "</body></html>";
+    // Replace newlines with <br> for HTML rendering in Word
+    const formattedText = generatedDraft.replace(/\n/g, "<br>");
+    const sourceHTML = header + formattedText + footer;
+    
+    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+    const fileDownload = document.createElement("a");
+    document.body.appendChild(fileDownload);
+    fileDownload.href = source;
+    fileDownload.download = `${docType.replace(/\s+/g, '_')}_Draft.doc`;
+    fileDownload.click();
+    document.body.removeChild(fileDownload);
   };
 
   return (

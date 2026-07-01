@@ -29,7 +29,7 @@ export function InternDashboard({ language = "en" }: InternDashboardProps) {
   const TRANSLATIONS = {
     en: {
       pageTitle: "INTERN MANAGEMENT & AUDITS",
-      pageSub: "Layer 4 · Junior Advocates Assignments & Audit Logs",
+      pageSub: "Junior Advocates Assignments & Audit Logs",
       delegateTitle: "Delegate Research Task",
       selectIntern: "Select Intern",
       taskDesc: "Task Description",

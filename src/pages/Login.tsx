@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Key, User, FileText, Phone, ArrowLeft } from "lucide-react";
 import { ScalesOfJustice } from "../components/LegalIcons";
-
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
+import { auth, db } from "../firebase";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 interface LoginProps {
-  onLoginSuccess: (role: "Senior" | "Associate" | "Intern") => void;
+  onLoginSuccess: (role: "Senior" | "Associate" | "Intern", userName?: string) => void;
   onBackToLanding: () => void;
   initialIsSignUp?: boolean;
 }
@@ -21,7 +23,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
   const [isLoading, setIsLoading] = useState(false);
 
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -31,33 +33,89 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
         return;
       }
       setIsLoading(true);
-      setTimeout(() => {
+      try {
+        const userCred = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(userCred.user, { displayName: name });
+        await setDoc(doc(db, "users", userCred.user.uid), {
+          name,
+          email,
+          role,
+          barNumber,
+          phone,
+          createdAt: new Date().toISOString()
+        });
+        onLoginSuccess(role, name);
+      } catch (err: any) {
+        setError(err.message || "Failed to create account.");
+      } finally {
         setIsLoading(false);
-        onLoginSuccess(role);
-      }, 1500);
+      }
     } else {
       if (!email || !password) {
         setError("Please fill in all credentials.");
         return;
       }
       setIsLoading(true);
-      setTimeout(() => {
-        const lowerEmail = email.toLowerCase();
-        if (lowerEmail === "sharma@vakeel.ai" && password === "password") {
-          setIsLoading(false);
-          onLoginSuccess("Senior");
-        } else if (lowerEmail === "priya@vakeel.ai" && password === "password") {
-          setIsLoading(false);
-          onLoginSuccess("Associate");
-        } else if (lowerEmail === "rohan@vakeel.ai" && password === "password") {
-          setIsLoading(false);
-          onLoginSuccess("Intern");
+      try {
+        const userCred = await signInWithEmailAndPassword(auth, email, password);
+        const userName = userCred.user.displayName || undefined;
+        
+        let userRole = role;
+        const userDoc = await getDoc(doc(db, "users", userCred.user.uid));
+        if (userDoc.exists()) {
+          userRole = userDoc.data().role || role;
         } else {
-          // Allow custom user inputs to succeed as the selected role
-          setIsLoading(false);
-          onLoginSuccess(role);
+          const lowerEmail = email.toLowerCase();
+          if (lowerEmail === "sharma@vakeel.ai") userRole = "Senior";
+          else if (lowerEmail === "priya@vakeel.ai") userRole = "Associate";
+          else if (lowerEmail === "rohan@vakeel.ai") userRole = "Intern";
         }
-      }, 1500);
+        
+        onLoginSuccess(userRole as "Senior" | "Associate" | "Intern", userName);
+      } catch (err: any) {
+        if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
+          setError("Incorrect email or password.");
+        } else if (err.code === "auth/user-not-found") {
+          setError("No user found with this email.");
+        } else {
+          setError(err.message || "Failed to sign in.");
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const provider = new GoogleAuthProvider();
+      const userCred = await signInWithPopup(auth, provider);
+      
+      const userDoc = await getDoc(doc(db, "users", userCred.user.uid));
+      let userRole = "Senior";
+      const userName = userCred.user.displayName || "Google User";
+      
+      if (userDoc.exists()) {
+        userRole = userDoc.data().role || "Senior";
+      } else {
+        await setDoc(doc(db, "users", userCred.user.uid), {
+          name: userName,
+          email: userCred.user.email,
+          role: "Senior", // Default role for new Google logins
+          barNumber: "Pending",
+          phone: "Pending",
+          createdAt: new Date().toISOString()
+        });
+      }
+      
+      onLoginSuccess(userRole as "Senior" | "Associate" | "Intern", userName);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Google Sign-In Failed");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -391,7 +449,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
               </button>
               <button
                 type="button"
-                onClick={() => alert("Google SSO is simulated.")}
+                onClick={handleGoogleLogin}
                 className="py-2 px-3 border border-[#c9a84c]/20 hover:border-[#c9a84c]/50 bg-[#130f06]/40 hover:bg-[#130f06]/80 text-[#c2b69a] hover:text-[#f0e8d0] rounded-lg transition-all text-[10px] font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <svg className="w-3 h-3 text-[#c9a84c]" viewBox="0 0 24 24" fill="currentColor">

@@ -37,7 +37,7 @@ export function SettingsConfiguration() {
             CHAMBER CONFIGURATIONS
           </h1>
           <p className="text-muted-foreground text-xs font-mono uppercase tracking-wide">
-            Layer 4 · Admin Settings, API Integrations &amp; Custom Rules
+            Admin Settings, API Integrations &amp; Custom Rules
           </p>
         </div>
       </div>
