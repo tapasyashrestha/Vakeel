@@ -190,6 +190,40 @@ export const PUBLIC_CORPUS_CHUNKS: TextChunk[] = [
       paragraph_reference: "Para 22",
       title: "Retrospective GST Registration Cancellation"
     }
+  },
+  {
+    id: "pub_chk_11",
+    document_id: "pub_doc_10",
+    is_private: false,
+    source_corpus: "public",
+    chunk_text: "The High Court may exercise its inherent powers under Section 482 of the CrPC to quash criminal proceedings / FIR to prevent abuse of the process of any court or to secure the ends of justice. One key category for quashing is where the allegations made in the FIR or complaint, even if they are taken at their face value and accepted in their entirety, do not prima facie constitute any offence or make out a case against the accused.",
+    metadata: {
+      id: "pub_chk_11",
+      document_id: "pub_doc_10",
+      source_corpus: "public",
+      case_name: "State of Haryana vs. Bhajan Lal",
+      court: "Supreme Court of India",
+      year: 1992,
+      paragraph_reference: "Para 102",
+      title: "Inherent Powers and Guidelines for Quashing FIR"
+    }
+  },
+  {
+    id: "pub_chk_12",
+    document_id: "pub_doc_11",
+    is_private: false,
+    source_corpus: "public",
+    chunk_text: "An arbitration agreement need not be signed by both parties to be valid and binding under Section 7(3) of the Arbitration and Conciliation Act, 1996. It is sufficient if the agreement is in writing and there is clear evidence of the parties' conduct, performance, or correspondence demonstrating that they accepted and acted upon the contract containing the arbitration clause.",
+    metadata: {
+      id: "pub_chk_12",
+      document_id: "pub_doc_11",
+      source_corpus: "public",
+      case_name: "Caravel Shipping Services Pvt. Ltd. vs. Premier Industries India Ltd.",
+      court: "Supreme Court of India",
+      year: 2018,
+      paragraph_reference: "Para 12",
+      title: "Validity of Arbitration Clause in Unsigned Agreement"
+    }
   }
 ];
 
@@ -290,6 +324,34 @@ export const PRIVATE_CORPUS_CHUNKS: TextChunk[] = [
       document_id: "pri_doc_6",
       source_corpus: "private",
       title: "Gupta Iron & Steel - Sec 83 Case History",
+      is_private: true
+    }
+  },
+  {
+    id: "pri_chk_8",
+    document_id: "pri_doc_7",
+    is_private: false,
+    source_corpus: "private",
+    chunk_text: "CHAMBER LITIGATION MEMO: When drafting a Section 482 CrPC petition to quash an FIR, ensure the statement of facts systematically compares the dispute to civil breach of contract precedents. Emphasize that the commercial transaction was acted upon and any failure is purely civil, missing the criminal intent required under Section 420 IPC, thereby satisfying Bhajan Lal guidelines [Bhajan Lal Para 102].",
+    metadata: {
+      id: "pri_chk_8",
+      document_id: "pri_doc_7",
+      source_corpus: "private",
+      title: "Chamber Memo - Sec 482 Quashing Guidelines",
+      is_private: false
+    }
+  },
+  {
+    id: "pri_chk_9",
+    document_id: "pri_doc_8",
+    is_private: true,
+    source_corpus: "private",
+    chunk_text: "CONFIDENTIAL CHAMBER STRATEGY: For arbitration enforcement under unsigned agreements, draft the Section 11 application with copies of all email orders, invoice acknowledgements, and payments. Under Caravel Shipping [Caravel Shipping Para 12], this conduct establishes contract acceptance. Keep client negotiation notes private.",
+    metadata: {
+      id: "pri_chk_9",
+      document_id: "pri_doc_8",
+      source_corpus: "private",
+      title: "Chamber Strategy - Unsigned Contract Arbitration",
       is_private: true
     }
   }

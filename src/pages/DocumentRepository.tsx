@@ -4,6 +4,70 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../firebase";
 import { FolderOpen, Search, Eye, Download, Trash, Shield, Lock, FileText, User, Upload } from "lucide-react";
 
+// IndexedDB utility functions for local prototype file storage
+const DB_NAME = "VakeelDocumentStore";
+const STORE_NAME = "documents";
+
+function openDocumentDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function storeLocalFile(id: string, file: Blob): Promise<void> {
+  try {
+    const db = await openDocumentDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.put(file, id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  } catch (err) {
+    console.error("IndexedDB store error:", err);
+  }
+}
+
+async function getLocalFile(id: string): Promise<Blob | null> {
+  try {
+    const db = await openDocumentDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readonly");
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(id);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (err) {
+    console.error("IndexedDB read error:", err);
+    return null;
+  }
+}
+
+async function deleteLocalFile(id: string): Promise<void> {
+  try {
+    const db = await openDocumentDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.delete(id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  } catch (err) {
+    console.error("IndexedDB delete error:", err);
+  }
+}
+
 interface ChamberFile {
   id: string;
   name: string;
@@ -13,14 +77,17 @@ interface ChamberFile {
   isPrivate: boolean;
   dateAdded: string;
   url?: string;
+  isLocal?: boolean;
+  storagePath?: string;
 }
 
 interface DocumentRepositoryProps {
+  chamberId: string | null;
   currentRole?: string;
   language?: string;
 }
 
-export function DocumentRepository({ currentRole = "Senior", language = "en" }: DocumentRepositoryProps) {
+export function DocumentRepository({ chamberId, currentRole = "Senior", language = "en" }: DocumentRepositoryProps) {
   const TRANSLATIONS = {
     en: {
       pageTitle: "CHAMBER DOCUMENT REPOSITORY",
@@ -134,12 +201,13 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
   const [files, setFiles] = useState<ChamberFile[]>([]);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "documents"), (snapshot) => {
+    if (!chamberId) return;
+    const unsubscribe = onSnapshot(collection(db, "chambers", chamberId, "documents"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChamberFile));
       setFiles(data);
     });
     return () => unsubscribe();
-  }, []);
+  }, [chamberId]);
 
   const filteredFiles = files.filter((f) => {
     const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -154,17 +222,22 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
     return matchesSearch && isVisibleByRole && matchesTab;
   });
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, isLocal?: boolean) => {
+    if (!chamberId) return;
     try {
-      await deleteDoc(doc(db, "documents", id));
+      await deleteDoc(doc(db, "chambers", chamberId, "documents", id));
+      if (isLocal) {
+        await deleteLocalFile(id).catch(err => console.warn("Failed to delete local file:", err));
+      }
     } catch (error) {
       console.error(error);
     }
   };
 
   const handleTogglePrivacy = async (id: string, currentStatus: boolean) => {
+    if (!chamberId) return;
     try {
-      await updateDoc(doc(db, "documents", id), {
+      await updateDoc(doc(db, "chambers", chamberId, "documents", id), {
         isPrivate: !currentStatus
       });
     } catch (error) {
@@ -173,7 +246,54 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
     }
   };
 
+  const handleViewFile = async (file: ChamberFile, forceDownload = false) => {
+    try {
+      let fileUrl = file.url;
+      let blob: Blob | null = null;
+
+      if (file.isLocal) {
+        blob = await getLocalFile(file.id);
+        if (blob) {
+          fileUrl = URL.createObjectURL(blob);
+        } else {
+          alert(`This document is stored locally in IndexedDB but was not found. It might have been uploaded from another browser or cleared.`);
+          return;
+        }
+      }
+
+      if (!fileUrl) {
+        alert(`No URL or local content available for "${file.name}"`);
+        return;
+      }
+
+      if (forceDownload) {
+        // Trigger a download
+        const link = document.createElement("a");
+        link.href = fileUrl;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Revoke the object URL if it was created locally
+        if (file.isLocal) {
+          setTimeout(() => URL.revokeObjectURL(fileUrl!), 100);
+        }
+      } else {
+        // Preview: open in a new tab
+        window.open(fileUrl, "_blank");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Error opening file");
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!chamberId) {
+      alert("No active chamber detected.");
+      return;
+    }
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -198,21 +318,41 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
     }
 
     try {
-      // PROTOTYPE BYPASS: We are skipping Firebase Storage upload because the project is on the Spark plan 
-      // without a provisioned bucket. We just save the metadata to Firestore so the UI works!
-      const mockDownloadURL = "https://example.com/mock-document.pdf";
+      let downloadURL = "";
+      let storagePath = "";
+      
+      try {
+        // Try uploading to Firebase Storage under tenant-isolated path
+        const storageRef = ref(storage, `chambers/${chamberId}/documents/${Date.now()}_${name}`);
+        const uploadResult = await uploadBytes(storageRef, file);
+        downloadURL = await getDownloadURL(uploadResult.ref);
+        storagePath = uploadResult.ref.fullPath;
+      } catch (storageError) {
+        console.warn("Firebase Storage failed, falling back to local IndexedDB storage:", storageError);
+      }
 
-      const newFile = {
+      const newFile: any = {
         name: name,
         size: sizeStr,
         type: docType,
         uploader: currentRole,
         isPrivate: isPrivate,
-        dateAdded: new Date().toISOString().split("T")[0],
-        url: mockDownloadURL
+        dateAdded: new Date().toISOString().split("T")[0]
       };
+
+      if (downloadURL) {
+        newFile.url = downloadURL;
+        newFile.storagePath = storagePath;
+      } else {
+        newFile.isLocal = true;
+      }
       
-      await addDoc(collection(db, "documents"), newFile);
+      const docRef = await addDoc(collection(db, "chambers", chamberId, "documents"), newFile);
+
+      if (!downloadURL) {
+        await storeLocalFile(docRef.id, file);
+      }
+
       alert(`File "${name}" uploaded successfully!`);
     } catch (error: any) {
       alert(`Upload failed: ${error.message}`);
@@ -337,26 +477,14 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
                     <td className="p-4">
                       <div className="flex items-center justify-center gap-2">
                         <button
-                          onClick={() => {
-                            if (file.url) {
-                              window.open(file.url, '_blank');
-                            } else {
-                              alert(`URL not available for "${file.name}"`);
-                            }
-                          }}
+                          onClick={() => handleViewFile(file, false)}
                           className="p-1.5 hover:bg-[#130f06] border border-[#c9a84c]/20 hover:border-[#c9a84c] rounded text-[#c9a84c] hover:text-[#f0e8d0] transition-all cursor-pointer"
                           title="Preview Document"
                         >
                           <Eye size={13} />
                         </button>
                         <button
-                          onClick={() => {
-                            if (file.url) {
-                              window.open(file.url, '_blank');
-                            } else {
-                              alert(`URL not available for "${file.name}"`);
-                            }
-                          }}
+                          onClick={() => handleViewFile(file, true)}
                           className="p-1.5 hover:bg-[#130f06] border border-[#c9a84c]/20 hover:border-[#c9a84c] rounded text-[#c9a84c] hover:text-[#f0e8d0] transition-all cursor-pointer"
                           title="Download Document"
                         >
@@ -370,7 +498,7 @@ export function DocumentRepository({ currentRole = "Senior", language = "en" }: 
                           {file.isPrivate ? <FolderOpen size={13} /> : <Lock size={13} />}
                         </button>
                         <button
-                          onClick={() => handleDelete(file.id)}
+                          onClick={() => handleDelete(file.id, file.isLocal)}
                           className="p-1.5 hover:bg-red-950/30 border border-[#c9a84c]/10 hover:border-red-500/30 rounded text-[#c2b69a]/50 hover:text-red-400 transition-all cursor-pointer"
                         >
                           <Trash size={13} />

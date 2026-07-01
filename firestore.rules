@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Checks if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: Gets the user's chamber_id from custom token claims
+    function userChamberId() {
+      return request.auth.token.chamber_id;
+    }
+
+    // Helper: Gets the user's role from custom token claims
+    function userRole() {
+      return request.auth.token.role;
+    }
+
+    // Helper: Checks if the user belongs to the specified chamber
+    function belongsToChamber(chamberId) {
+      return isAuthenticated() && userChamberId() == chamberId;
+    }
+
+    // Helper: Checks if the user is a senior or associate
+    function isSeniorOrAssociate() {
+      return userRole() == 'senior' || userRole() == 'associate' || userRole() == 'Senior' || userRole() == 'Associate';
+    }
+
+    // Helper: Checks if the user is an intern
+    function isIntern() {
+      return userRole() == 'intern' || userRole() == 'Intern';
+    }
+
+    // Scoped rules under /chambers/{chamberId}
+    match /chambers/{chamberId} {
+      allow read, write: if belongsToChamber(chamberId);
+
+      // Members subcollection
+      match /members/{memberId} {
+        allow read, write: if belongsToChamber(chamberId);
+      }
+
+      // Documents subcollection
+      match /documents/{documentId} {
+        // Intern visibility check: Interns can only read if visibility is "intern_accessible"
+        allow read: if belongsToChamber(chamberId) && 
+          (!isIntern() || resource.data.visibility == 'intern_accessible');
+        
+        // Only Senior and Associate can write documents
+        allow write: if belongsToChamber(chamberId) && isSeniorOrAssociate();
+      }
+
+      // Drafts subcollection
+      match /drafts/{draftId} {
+        allow read: if belongsToChamber(chamberId) &&
+          (!isIntern() || resource.data.visibility == 'intern_accessible');
+        allow write: if belongsToChamber(chamberId) && isSeniorOrAssociate();
+      }
+
+      // Tasks/Notes subcollection (Interns can write tasks/notes but not final drafts)
+      match /tasks/{taskId} {
+        allow read, write: if belongsToChamber(chamberId);
+      }
+      
+      // Hearings subcollection
+      match /hearings/{hearingId} {
+        allow read, write: if belongsToChamber(chamberId);
+      }
+
+      // Cases subcollection
+      match /cases/{caseId} {
+        allow read: if belongsToChamber(chamberId) && 
+          (!isIntern() || resource.data.visibility == 'intern_accessible');
+        allow write: if belongsToChamber(chamberId) && isSeniorOrAssociate();
+      }
+
+      // Document embeddings
+      match /document_embeddings/{embeddingId} {
+        allow read, write: if belongsToChamber(chamberId);
+      }
+
+      // Deadlines
+      match /deadlines/{deadlineId} {
+        allow read, write: if belongsToChamber(chamberId);
+      }
+    }
+
+    // Invites collection (Top-level)
+    // Readable by anyone with the invite's exact ID (so unauthenticated invite acceptance flow can check validity)
+    // Writable only by senior/associate matching the invite's chamber_id
+    match /invites/{inviteId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated() && isSeniorOrAssociate() && 
+        request.resource.data.chamber_id == userChamberId();
+      allow delete: if isAuthenticated() && isSeniorOrAssociate() && 
+        resource.data.chamber_id == userChamberId();
+    }
+
+    // Shared public case law corpus (Read-only)
+    match /public_case_law_embeddings/{chunkId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

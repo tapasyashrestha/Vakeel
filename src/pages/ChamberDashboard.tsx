@@ -4,7 +4,7 @@ import { db } from "../firebase";
 import { askLegalQuestion } from "../ai";
 import { Briefcase, Calendar, Clock, FileText, Search, User, ChevronRight, Plus, Upload, Activity } from "lucide-react";
 
-export function ChamberDashboard({ currentRole = "Senior", language = "en", userName = null, onNavigate }: { currentRole?: string; language?: string; userName?: string | null; onNavigate?: (view: string) => void }) {
+export function ChamberDashboard({ chamberId, currentRole = "Senior", language = "en", userName = null, onNavigate }: { chamberId: string | null; currentRole?: string; language?: string; userName?: string | null; onNavigate?: (view: any) => void }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [aiResponse, setAiResponse] = useState("");
   const [isAskingAi, setIsAskingAi] = useState(false);
@@ -12,12 +12,13 @@ export function ChamberDashboard({ currentRole = "Senior", language = "en", user
   const [hearings, setHearings] = useState<any[]>([]);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "hearings"), (snapshot) => {
+    if (!chamberId) return;
+    const unsubscribe = onSnapshot(collection(db, "chambers", chamberId, "hearings"), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setHearings(data);
     });
     return () => unsubscribe();
-  }, []);
+  }, [chamberId]);
 
   const seedMockHearings = async () => {
     const mockHearings = [
@@ -49,8 +50,9 @@ export function ChamberDashboard({ currentRole = "Senior", language = "en", user
         bench: "Justice Yashwant Varma"
       }
     ];
+    if (!chamberId) return;
     for (const h of mockHearings) {
-      await addDoc(collection(db, "hearings"), h);
+      await addDoc(collection(db, "chambers", chamberId, "hearings"), h);
     }
   };
 

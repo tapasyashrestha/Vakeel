@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Landing } from "./pages/Landing";
 import { RetrievalWorkspace } from "./pages/RetrievalWorkspace";
 import { ChamberDashboard } from "./pages/ChamberDashboard";
@@ -13,6 +13,9 @@ import { BillingInvoicing } from "./pages/BillingInvoicing";
 import type { UserRole } from "./components/RoleSimulator";
 import { ScalesOfJustice } from "./components/LegalIcons";
 import { Login } from "./pages/Login";
+import { CreateChamberOnboarding } from "./components/CreateChamberOnboarding";
+import { auth } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   Menu,
   X,
@@ -96,6 +99,15 @@ const NAVBAR_TRANSLATIONS = {
   }
 };
 
+const normalizeRole = (role: string | undefined | null): UserRole => {
+  if (!role) return "Senior";
+  const r = role.toLowerCase();
+  if (r === "senior") return "Senior";
+  if (r === "associate") return "Associate";
+  if (r === "intern") return "Intern";
+  return "Senior";
+};
+
 export default function App() {
   // Navigation State
   const [currentView, setCurrentView] = useState<
@@ -117,12 +129,72 @@ export default function App() {
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authModeIsSignUp, setAuthModeIsSignUp] = useState(false);
+  const [chamberId, setChamberId] = useState<string | null>(null);
+  const [isLoadingClaims, setIsLoadingClaims] = useState(true);
 
   // Language State
   const [language, setLanguage] = useState<"en" | "hi" | "ur" | "mr" | "bn">("en");
 
   const [currentRole, setCurrentRole] = useState<UserRole>("Senior");
   const [userName, setUserName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserName(user.displayName);
+        try {
+          const tokenResult = await user.getIdTokenResult();
+          const claims = tokenResult.claims;
+          if (claims.chamber_id) {
+            setChamberId(claims.chamber_id as string);
+            setCurrentRole(normalizeRole(claims.role as string));
+            setIsAuthenticated(true);
+          } else {
+            // Check for invite token in URL
+            const params = new URLSearchParams(window.location.search);
+            const inviteId = params.get("invite");
+            if (inviteId) {
+              try {
+                const token = await user.getIdToken();
+                const response = await fetch(`http://localhost:8000/invites/${inviteId}/accept`, {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${token}`
+                  }
+                });
+                if (response.ok) {
+                  const data = await response.json();
+                  const refreshedResult = await user.getIdTokenResult(true);
+                  setChamberId(data.chamber_id || refreshedResult.claims.chamber_id as string);
+                  setCurrentRole(normalizeRole(data.role || refreshedResult.claims.role as string));
+                  setIsAuthenticated(true);
+                  window.history.replaceState({}, document.title, "/");
+                } else {
+                  const errData = await response.json();
+                  alert(`Failed to accept invite: ${errData.detail || "Unknown error"}`);
+                  setCurrentView("landing");
+                }
+              } catch (err: any) {
+                alert(`Error accepting invite: ${err.message}`);
+                setCurrentView("landing");
+              }
+            } else {
+              setIsAuthenticated(true); // Will render the CreateChamberOnboarding screen
+            }
+          }
+        } catch (error) {
+          console.error("Error loading auth claims:", error);
+          setIsAuthenticated(false);
+        }
+      } else {
+        setIsAuthenticated(false);
+        setChamberId(null);
+        setUserName(null);
+      }
+      setIsLoadingClaims(false);
+    });
+    return () => unsubscribe();
+  }, []);
   const isDraftDestination = true;
   const routerConfidence = "High";
   const strictSynthesis = true;
@@ -157,18 +229,62 @@ export default function App() {
 
   const profile = getProfileData();
 
-  if (currentView !== "landing" && !isAuthenticated) {
-    return (
-      <Login
-        onLoginSuccess={(role, name) => {
-          setCurrentRole(role);
-          setUserName(name || null);
-          setIsAuthenticated(true);
-        }}
-        onBackToLanding={() => setCurrentView("landing")}
-        initialIsSignUp={authModeIsSignUp}
-      />
-    );
+  if (currentView !== "landing") {
+    if (isLoadingClaims) {
+      return (
+        <div className="min-h-screen bg-[#1a1408] text-[#f0e8d0] flex items-center justify-center font-sans">
+          <div className="text-center space-y-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#c9a84c] mx-auto animate-pulse"></div>
+            <p className="text-xs font-mono uppercase tracking-widest text-[#c9a84c]">Verifying security context...</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (!isAuthenticated) {
+      return (
+        <Login
+          onLoginSuccess={async (role, name) => {
+            const user = auth.currentUser;
+            if (user) {
+              const tokenResult = await user.getIdTokenResult(true);
+              const cid = tokenResult.claims.chamber_id as string | undefined;
+              if (cid) {
+                setChamberId(cid);
+                setCurrentRole(normalizeRole(tokenResult.claims.role as string || role));
+                setUserName(user.displayName || name || null);
+                setIsAuthenticated(true);
+                setCurrentView("dashboard");
+              } else {
+                setUserName(user.displayName || name || null);
+                setIsAuthenticated(true);
+              }
+            }
+          }}
+          onBackToLanding={() => setCurrentView("landing")}
+          initialIsSignUp={authModeIsSignUp}
+        />
+      );
+    }
+
+    if (!chamberId) {
+      return (
+        <CreateChamberOnboarding
+          onChamberCreated={(newChamberId, newRole) => {
+            setChamberId(newChamberId);
+            setCurrentRole(normalizeRole(newRole));
+            setIsAuthenticated(true);
+            setCurrentView("dashboard");
+          }}
+          onSignOut={async () => {
+            await auth.signOut();
+            setIsAuthenticated(false);
+            setChamberId(null);
+            setCurrentView("landing");
+          }}
+        />
+      );
+    }
   }
 
   return (
@@ -504,7 +620,14 @@ export default function App() {
                       <Receipt size={15} />
                     </button>
                     <button
-                      onClick={() => { setIsAuthenticated(false); setCurrentView("landing"); setIsSidebarOpen(false); setUserName(null); }}
+                      onClick={async () => {
+                        await auth.signOut();
+                        setIsAuthenticated(false);
+                        setChamberId(null);
+                        setCurrentView("landing");
+                        setIsSidebarOpen(false);
+                        setUserName(null);
+                      }}
                       className="p-1.5 hover:text-destructive hover:bg-secondary/50 rounded transition-colors cursor-pointer"
                       title="Sign Out"
                     >
@@ -552,14 +675,19 @@ export default function App() {
                   language={language}
                 />
               )}
-              {currentView === "dashboard" && <ChamberDashboard currentRole={currentRole} language={language} userName={userName} onNavigate={setCurrentView} />}
+              {currentView === "dashboard" && <ChamberDashboard chamberId={chamberId} currentRole={currentRole} language={language} userName={userName} onNavigate={setCurrentView} />}
               {currentView === "internWorkspace" && <InternWorkspace language={language} />}
               {currentView === "chat" && <ChatPortal language={language} />}
               {currentView === "drafting" && <DraftingPanel language={language} />}
-              {currentView === "repository" && <DocumentRepository currentRole={currentRole} language={language} />}
+              {currentView === "repository" && <DocumentRepository chamberId={chamberId} currentRole={currentRole} language={language} />}
               {currentView === "calendar" && <SmartCalendar language={language} />}
               {currentView === "interns" && currentRole !== "Intern" && <InternDashboard language={language} />}
-              {currentView === "settings" && <SettingsConfiguration />}
+              {currentView === "settings" && (
+                <SettingsConfiguration 
+                  chamberId={chamberId} 
+                  onProfileUpdate={(newName) => setUserName(newName)} 
+                />
+              )}
               {currentView === "billing" && <BillingInvoicing />}
             </main>
           </div>

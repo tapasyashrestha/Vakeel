@@ -20,3 +20,13 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+export async function getChamberClaims(forceRefresh = false) {
+    const user = auth.currentUser;
+    if (!user) return null;
+    const tokenResult = await user.getIdTokenResult(forceRefresh);
+    return {
+        chamberId: tokenResult.claims.chamber_id as string | undefined,
+        role: tokenResult.claims.role as string | undefined
+    };
+}
