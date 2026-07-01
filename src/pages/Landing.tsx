@@ -232,8 +232,17 @@ export function Landing({ onNavigate, language = "en" }: LandingProps) {
             </div>
           </div>
 
-          {/* Right column remains empty to reveal background watermark */}
-          <div className="lg:col-span-4 hidden lg:block"></div>
+          {/* Right column with Statue of Justice Artwork */}
+          <div className="lg:col-span-4 hidden lg:block relative flex items-center justify-center min-h-[400px]">
+            {/* Soft gradient fades on top and bottom to blend it in */}
+            <div className="absolute inset-0 pointer-events-none bg-gradient-to-t from-background via-transparent to-background z-10" />
+            <div className="absolute inset-0 pointer-events-none bg-gradient-to-r from-background via-transparent to-transparent z-10" />
+            <img 
+              src="/lady_justice_bg.png" 
+              alt="Lady Justice" 
+              className="w-full h-auto object-contain opacity-40 max-h-[500px] select-none pointer-events-none filter drop-shadow-[0_0_40px_rgba(201,168,76,0.25)] scale-110"
+            />
+          </div>
         </div>
       </section>
 

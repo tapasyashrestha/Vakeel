@@ -5,7 +5,7 @@ interface InternWorkspaceProps {
   language?: string;
 }
 
-export function InternWorkspace({ language = "en" }: InternWorkspaceProps) {
+export function InternWorkspace({ language: _language = "en" }: InternWorkspaceProps) {
   const [dragActive, setDragActive] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<string | null>(null);
 
