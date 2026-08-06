@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
 import { Save, Sparkles, Bell, Shield, User } from "lucide-react";
-import { auth, db } from "../firebase";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { updateProfile } from "firebase/auth";
+import { supabase } from "../supabase";
 
 interface SettingsConfigurationProps {
   chamberId: string | null;
@@ -25,7 +23,7 @@ export function SettingsConfiguration({ chamberId, onProfileUpdate }: SettingsCo
   const [primaryCourt, setPrimaryCourt] = useState(() => {
     return localStorage.getItem("vakeel_primary_court") || "High Court of Delhi";
   });
-  
+
   // AI config
   const [aiModel, setAiModel] = useState(() => {
     return localStorage.getItem("vakeel_ai_model") || "gpt-4o";
@@ -54,59 +52,59 @@ export function SettingsConfiguration({ chamberId, onProfileUpdate }: SettingsCo
   const [error, setError] = useState("");
 
   useEffect(() => {
-    // 1. Fetch User Data
-    const fetchUserData = async () => {
-      const user = auth.currentUser;
+    const loadData = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       if (!user) return;
-      try {
-        const userDocRef = doc(db, "users", user.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          const udata = userDocSnap.data();
-          if (udata.name) setUserName(udata.name);
-          if (udata.email) setUserEmail(udata.email);
-          if (udata.barNumber) setUserBarNumber(udata.barNumber);
-          if (udata.phone) setUserPhone(udata.phone);
 
-          // Default senior principal to user's name if not configured yet
-          if (udata.name && !localStorage.getItem("vakeel_senior_advocate")) {
-            setSeniorAdvocate(udata.name);
-          }
-        } else {
-          if (user.displayName) setUserName(user.displayName);
-          if (user.email) setUserEmail(user.email);
+      // Load profile
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
+
+      if (profile) {
+        setUserName(profile.full_name || "");
+        setUserEmail(user.email || "");
+        setUserBarNumber(profile.bar_number || "");
+        setUserPhone(profile.phone || "");
+
+        if (
+          profile.full_name &&
+          !localStorage.getItem("vakeel_senior_advocate")
+        ) {
+          setSeniorAdvocate(profile.full_name);
         }
-      } catch (err) {
-        console.error("Error fetching user data from Firestore:", err);
+      }
+
+      // Load chamber
+      if (chamberId) {
+        const { data: chamber } = await supabase
+          .from("chambers")
+          .select("*")
+          .eq("id", chamberId)
+          .single();
+
+        if (chamber) {
+          setChamberName(chamber.name || "");
+          setSeniorAdvocate(chamber.seniorAdvocate || "");
+          setPrimaryCourt(chamber.primaryCourt || "");
+          setAiModel(chamber.aiModel || "gpt-4o");
+          setAiTemperature(chamber.aiTemperature ?? 0.2);
+          setStrictRAG(chamber.strictRAG ?? true);
+          setEmailDigest(chamber.emailDigest ?? true);
+          setSmsLimitationAlerts(
+            chamber.smsLimitationAlerts ?? true
+          );
+        }
       }
     };
 
-    // 2. Fetch Chamber Data
-    const fetchChamberData = async () => {
-      if (!chamberId) return;
-      try {
-        const docRef = doc(db, "chambers", chamberId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.name) setChamberName(data.name);
-          if (data.seniorAdvocate) setSeniorAdvocate(data.seniorAdvocate);
-          if (data.primaryCourt) setPrimaryCourt(data.primaryCourt);
-          if (data.aiModel) setAiModel(data.aiModel);
-          if (data.aiTemperature !== undefined) setAiTemperature(data.aiTemperature);
-          if (data.strictRAG !== undefined) setStrictRAG(data.strictRAG);
-          if (data.emailDigest !== undefined) setEmailDigest(data.emailDigest);
-          if (data.smsLimitationAlerts !== undefined) setSmsLimitationAlerts(data.smsLimitationAlerts);
-        }
-      } catch (err) {
-        console.error("Error fetching chamber profile data from Firestore:", err);
-      }
-    };
-
-    fetchUserData();
-    fetchChamberData();
+    loadData();
   }, [chamberId]);
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
@@ -115,33 +113,49 @@ export function SettingsConfiguration({ chamberId, onProfileUpdate }: SettingsCo
 
     try {
       // 1. Update User Profile
-      const user = auth.currentUser;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       if (user) {
-        await updateProfile(user, { displayName: userName });
-        const userDocRef = doc(db, "users", user.uid);
-        await updateDoc(userDocRef, {
-          name: userName,
-          barNumber: userBarNumber,
-          phone: userPhone
-        });
-        if (onProfileUpdate) {
-          onProfileUpdate(userName);
-        }
+        const { error } = await supabase
+          .from("profiles")
+          .update({
+            full_name: userName,
+            bar_number: userBarNumber,
+            phone: userPhone,
+          })
+          .eq("id", user.id);
+
+        if (error) throw error;
+
+        onProfileUpdate?.(userName);
+      }
+      if (onProfileUpdate) {
+        onProfileUpdate(userName);
       }
 
+
+      // 2. Update Chamber Profile
       // 2. Update Chamber Profile
       if (chamberId) {
-        const docRef = doc(db, "chambers", chamberId);
-        await updateDoc(docRef, {
-          name: chamberName,
-          seniorAdvocate,
-          primaryCourt,
-          aiModel,
-          aiTemperature,
-          strictRAG,
-          emailDigest,
-          smsLimitationAlerts
-        });
+        const { error: chamberError } = await supabase
+          .from("chambers")
+          .update({
+            name: chamberName,
+            senior_advocate: seniorAdvocate,
+            primary_court: primaryCourt,
+            ai_model: aiModel,
+            ai_temperature: aiTemperature,
+            strict_rag: strictRAG,
+            email_digest: emailDigest,
+            sms_limitation_alerts: smsLimitationAlerts,
+          })
+          .eq("id", chamberId);
+
+        if (chamberError) {
+          throw chamberError;
+        }
       }
 
       // Also save to localStorage as a client-side backup
@@ -181,7 +195,7 @@ export function SettingsConfiguration({ chamberId, onProfileUpdate }: SettingsCo
       <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-12 gap-6 font-mono text-xs">
         {/* Left column (8 Columns): settings forms */}
         <div className="lg:col-span-8 space-y-6">
-          
+
           {/* Box 0: Personal Profile */}
           <div className="bg-card border border-primary/15 rounded-xl p-6 shadow-xl space-y-4">
             <h3 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5 border-b border-primary/10 pb-3">
@@ -360,7 +374,7 @@ export function SettingsConfiguration({ chamberId, onProfileUpdate }: SettingsCo
               <Shield size={14} />
               Save Actions
             </h3>
-            
+
             <button
               type="submit"
               disabled={isSaving}

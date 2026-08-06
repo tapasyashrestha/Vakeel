@@ -1,9 +1,7 @@
 import { useState } from "react";
 import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Key, User, FileText, Phone, ArrowLeft } from "lucide-react";
 import { ScalesOfJustice } from "../components/LegalIcons";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signInWithPopup, GoogleAuthProvider } from "firebase/auth";
-import { auth, db } from "../firebase";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+import { supabase } from "../supabase";
 interface LoginProps {
   onLoginSuccess: (role: "Senior" | "Associate" | "Intern", userName?: string) => void;
   onBackToLanding: () => void;
@@ -21,6 +19,14 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isAwaitingVerification, setIsAwaitingVerification] =
+    useState(false);
+
+  const [verificationEmail, setVerificationEmail] =
+    useState("");
+
+  const [verificationMessage, setVerificationMessage] =
+    useState("");
 
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -34,16 +40,35 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
       }
       setIsLoading(true);
       try {
-        const userCred = await createUserWithEmailAndPassword(auth, email, password);
-        await updateProfile(userCred.user, { displayName: name });
-        await setDoc(doc(db, "users", userCred.user.uid), {
-          name,
-          email,
-          role,
-          barNumber,
-          phone,
-          createdAt: new Date().toISOString()
-        });
+        const { data, error: signUpError } =
+          await supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              emailRedirectTo:
+                `${window.location.origin}?auth=verified`,
+              data: {
+                full_name: name.trim(),
+                role,
+                bar_number: barNumber.trim(),
+                phone: phone.trim(),
+              },
+            },
+          });
+
+        if (signUpError) {
+          throw signUpError;
+        }
+
+        if (!data.session) {
+          setVerificationEmail(email.trim());
+          setIsAwaitingVerification(true);
+          setVerificationMessage(
+            "We sent a verification link to your email."
+          );
+          return;
+        }
+
         onLoginSuccess(role, name);
       } catch (err: any) {
         setError(err.message || "Failed to create account.");
@@ -57,21 +82,29 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
       }
       setIsLoading(true);
       try {
-        const userCred = await signInWithEmailAndPassword(auth, email, password);
-        const userName = userCred.user.displayName || undefined;
-        
-        let userRole = role;
-        const userDoc = await getDoc(doc(db, "users", userCred.user.uid));
-        if (userDoc.exists()) {
-          userRole = userDoc.data().role || role;
-        } else {
-          const lowerEmail = email.toLowerCase();
-          if (lowerEmail === "sharma@vakeel.ai") userRole = "Senior";
-          else if (lowerEmail === "priya@vakeel.ai") userRole = "Associate";
-          else if (lowerEmail === "rohan@vakeel.ai") userRole = "Intern";
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) {
+          throw error;
         }
-        
-        onLoginSuccess(userRole as "Senior" | "Associate" | "Intern", userName);
+
+        const user = data.user;
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, full_name")
+          .eq("id", user.id)
+          .single();
+
+        const userRole =
+          (profile?.role as "Senior" | "Associate" | "Intern") ?? "Senior";
+
+        const userName = profile?.full_name ?? "";
+
+        onLoginSuccess(userRole, userName);
       } catch (err: any) {
         if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password") {
           setError("Incorrect email or password.");
@@ -85,32 +118,107 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
       }
     }
   };
+  const handleResendVerification = async () => {
+    if (!verificationEmail) return;
+
+    setIsLoading(true);
+    setError("");
+    setVerificationMessage("");
+
+    try {
+      const { error: resendError } =
+        await supabase.auth.resend({
+          type: "signup",
+          email: verificationEmail,
+          options: {
+            emailRedirectTo: `${window.location.origin}?auth=verified`,
+          },
+        });
+
+      if (resendError) {
+        throw resendError;
+      }
+
+      setVerificationMessage(
+        "A new verification email has been sent."
+      );
+    } catch (err: any) {
+      setError(
+        err.message || "Failed to resend verification email."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  const handleVerificationCheck = async () => {
+    setIsLoading(true);
+    setError("");
+    setVerificationMessage("");
+
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        throw sessionError;
+      }
+
+      if (!session?.user) {
+        setError(
+          "Email is not verified in this browser yet. Open the verification link, then return here."
+        );
+        return;
+      }
+
+      const { data: profile, error: profileError } =
+        await supabase
+          .from("profiles")
+          .select("full_name, role")
+          .eq("id", session.user.id)
+          .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      const verifiedRole =
+        (profile?.role as
+          | "Senior"
+          | "Associate"
+          | "Intern") || role;
+
+      const verifiedName =
+        profile?.full_name ||
+        session.user.user_metadata?.full_name ||
+        name;
+
+      onLoginSuccess(verifiedRole, verifiedName);
+    } catch (err: any) {
+      setError(
+        err.message || "Could not verify your session."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setError("");
+
     try {
-      const provider = new GoogleAuthProvider();
-      const userCred = await signInWithPopup(auth, provider);
-      
-      const userDoc = await getDoc(doc(db, "users", userCred.user.uid));
-      let userRole = "Senior";
-      const userName = userCred.user.displayName || "Google User";
-      
-      if (userDoc.exists()) {
-        userRole = userDoc.data().role || "Senior";
-      } else {
-        await setDoc(doc(db, "users", userCred.user.uid), {
-          name: userName,
-          email: userCred.user.email,
-          role: "Senior", // Default role for new Google logins
-          barNumber: "Pending",
-          phone: "Pending",
-          createdAt: new Date().toISOString()
-        });
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          emailRedirectTo: `${window.location.origin}?auth=verified`,
+        },
+      });
+
+      if (error) {
+        throw error;
       }
-      
-      onLoginSuccess(userRole as "Senior" | "Associate" | "Intern", userName);
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Google Sign-In Failed");
@@ -119,7 +227,101 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
     }
   };
 
+  // ----------------------
+  // Verification Screen
+  // ----------------------
+  if (isAwaitingVerification) {
+    const gmailUrl = "https://mail.google.com";
+
+    return (
+      <div className="min-h-screen w-full bg-[#1a1408] text-[#f0e8d0] flex items-center justify-center p-4 font-sans">
+        <div className="w-full max-w-md bg-[#221c0e]/90 border border-[#c9a84c]/20 rounded-2xl p-8 shadow-2xl text-center space-y-6">
+
+          <div className="w-14 h-14 mx-auto rounded-full bg-[#c9a84c]/10 border border-[#c9a84c]/30 flex items-center justify-center">
+            <Mail size={24} className="text-[#c9a84c]" />
+          </div>
+
+          <div>
+            <h1 className="text-xl font-bold uppercase tracking-wider font-serif">
+              Verify Your Email
+            </h1>
+
+            <p className="text-xs text-[#c2b69a] mt-3 leading-relaxed">
+              We sent a verification link to
+            </p>
+
+            <p className="text-sm text-[#c9a84c] font-bold mt-1 break-all">
+              {verificationEmail}
+            </p>
+          </div>
+
+          <p className="text-xs text-[#c2b69a]/70 leading-relaxed">
+            Open the email and click the verification link.
+            After verifying, click the button below.
+          </p>
+
+          {verificationMessage && (
+            <div className="p-3 bg-emerald-950/30 border border-emerald-500/20 rounded-lg text-xs text-emerald-300">
+              {verificationMessage}
+            </div>
+          )}
+
+          {error && (
+            <div className="p-3 bg-red-950/40 border border-red-500/30 rounded-lg text-xs text-red-300">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => window.open(gmailUrl, "_blank")}
+            className="w-full py-3 bg-[#c9a84c] text-[#1a1408] font-bold uppercase rounded-lg"
+          >
+            Open Gmail
+          </button>
+
+          <button
+            type="button"
+            onClick={handleVerificationCheck}
+            disabled={isLoading}
+            className="w-full py-3 border border-[#c9a84c]/30 rounded-lg"
+          >
+            {isLoading ? "Checking..." : "I've Verified My Email"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleResendVerification}
+            disabled={isLoading}
+            className="text-[#c9a84c] underline"
+          >
+            Resend Verification Email
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setIsAwaitingVerification(false);
+              setVerificationMessage("");
+              setError("");
+              setIsSignUp(false);
+            }}
+            className="text-xs text-[#c2b69a]/60"
+          >
+            Back to Login
+          </button>
+
+        </div>
+      </div>
+    );
+  }
+
+  // ----------------------
+  // Normal Login Screen
+  // ----------------------
+
   return (
+
     <div className="min-h-screen w-full bg-[#1a1408] text-[#f0e8d0] flex items-center justify-center p-4 sm:p-6 md:p-10 relative overflow-hidden font-sans select-none">
       {/* Floating Back to Home Button */}
       <button
@@ -153,7 +355,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
 
       {/* Split-Screen Login/Register Card */}
       <div className="relative z-10 w-full max-w-5xl bg-[#221c0e]/80 border border-[#c9a84c]/20 rounded-3xl shadow-2xl overflow-hidden backdrop-blur-md grid grid-cols-1 md:grid-cols-12 min-h-[620px]">
-        
+
         {/* Left Column: Ivory Branding & Scales (Desktop Only) */}
         <div className="hidden md:flex md:col-span-5 flex-col justify-between p-8 bg-gradient-to-b from-[#f5efdf] to-[#dfd5be] text-[#1a1408] border-r border-[#c9a84c]/25 relative">
           {/* Logo Branding */}
@@ -176,19 +378,19 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
                 <path d="M 5 21 L 19 21" />
                 <path d="M 12 21 L 12 4" />
                 <path d="M 10 4 L 14 4" />
-                
+
                 {/* Wiggling Main Beam */}
                 <g className="origin-[12px_7px] animate-wiggle">
                   <path d="M 5 7 L 19 7" />
                   {/* Left Pan Strings & Dish */}
                   <path d="M 5 7 L 2.5 14 L 7.5 14 Z" />
                   <path d="M 2.5 14 C 2.5 15.5 7.5 15.5 7.5 14" />
-                  
+
                   {/* Right Pan Strings & Dish */}
                   <path d="M 19 7 L 16.5 14 L 21.5 14 Z" />
                   <path d="M 16.5 14 C 16.5 15.5 21.5 15.5 21.5 14" />
                 </g>
-                
+
                 {/* Center Dial Needle */}
                 <path d="M 12 7 L 12 5.5" />
               </svg>
@@ -389,11 +591,10 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
               <button
                 type="submit"
                 disabled={isLoading}
-                className={`w-full py-3 mt-2 bg-[#c9a84c] text-[#1a1408] font-bold uppercase tracking-widest text-[11px] font-mono rounded-lg transition-all shadow-lg shadow-[#c9a84c]/10 flex items-center justify-center gap-2 cursor-pointer ${
-                  isLoading
-                    ? "bg-[#c9a84c]/70 text-[#1a1408]/60 cursor-not-allowed"
-                    : "hover:bg-[#c9a84c]/95"
-                }`}
+                className={`w-full py-3 mt-2 bg-[#c9a84c] text-[#1a1408] font-bold uppercase tracking-widest text-[11px] font-mono rounded-lg transition-all shadow-lg shadow-[#c9a84c]/10 flex items-center justify-center gap-2 cursor-pointer ${isLoading
+                  ? "bg-[#c9a84c]/70 text-[#1a1408]/60 cursor-not-allowed"
+                  : "hover:bg-[#c9a84c]/95"
+                  }`}
               >
                 {isLoading ? (
                   <>
@@ -453,7 +654,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
                 className="py-2 px-3 border border-[#c9a84c]/20 hover:border-[#c9a84c]/50 bg-[#130f06]/40 hover:bg-[#130f06]/80 text-[#c2b69a] hover:text-[#f0e8d0] rounded-lg transition-all text-[10px] font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <svg className="w-3 h-3 text-[#c9a84c]" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.44 0-6.228-2.77-6.228-6.19s2.788-6.19 6.228-6.19c1.683 0 3.118.608 4.223 1.693l3.073-3.073C19.24 2.807 15.96 1.8 12.24 1.8 6.474 1.8 1.8 6.474 1.8 12.24s4.674 10.44 10.44 10.44c6.19 0 10.44-4.35 10.44-10.44 0-.705-.084-1.385-.24-1.955H12.24z"/>
+                  <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.44 0-6.228-2.77-6.228-6.19s2.788-6.19 6.228-6.19c1.683 0 3.118.608 4.223 1.693l3.073-3.073C19.24 2.807 15.96 1.8 12.24 1.8 6.474 1.8 1.8 6.474 1.8 12.24s4.674 10.44 10.44 10.44c6.19 0 10.44-4.35 10.44-10.44 0-.705-.084-1.385-.24-1.955H12.24z" />
                 </svg>
                 Google SSO
               </button>

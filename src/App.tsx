@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { supabase } from "./supabase";
 import { Landing } from "./pages/Landing";
 import { RetrievalWorkspace } from "./pages/RetrievalWorkspace";
 import { ChamberDashboard } from "./pages/ChamberDashboard";
@@ -14,8 +15,6 @@ import type { UserRole } from "./components/RoleSimulator";
 import { ScalesOfJustice } from "./components/LegalIcons";
 import { Login } from "./pages/Login";
 import { CreateChamberOnboarding } from "./components/CreateChamberOnboarding";
-import { auth } from "./firebase";
-import { onAuthStateChanged } from "firebase/auth";
 import {
   Menu,
   X,
@@ -122,8 +121,11 @@ export default function App() {
     | "internWorkspace"
     | "settings"
     | "billing"
-  >("landing");
-
+  >(
+    new URLSearchParams(window.location.search).get("auth") === "verified"
+      ? "dashboard"
+      : "landing"
+  );
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Authentication State
@@ -139,68 +141,99 @@ export default function App() {
   const [userName, setUserName] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setUserName(user.displayName);
-        try {
-          const tokenResult = await user.getIdTokenResult();
-          const claims = tokenResult.claims;
-          if (claims.chamber_id) {
-            setChamberId(claims.chamber_id as string);
-            setCurrentRole(normalizeRole(claims.role as string));
-            setIsAuthenticated(true);
-          } else {
-            // Check for invite token in URL
-            const params = new URLSearchParams(window.location.search);
-            const inviteId = params.get("invite");
-            if (inviteId) {
-              try {
-                const token = await user.getIdToken();
-                const response = await fetch(`http://localhost:8000/invites/${inviteId}/accept`, {
-                  method: "POST",
-                  headers: {
-                    "Authorization": `Bearer ${token}`
-                  }
-                });
-                if (response.ok) {
-                  const data = await response.json();
-                  const refreshedResult = await user.getIdTokenResult(true);
-                  setChamberId(data.chamber_id || refreshedResult.claims.chamber_id as string);
-                  setCurrentRole(normalizeRole(data.role || refreshedResult.claims.role as string));
-                  setIsAuthenticated(true);
-                  window.history.replaceState({}, document.title, "/");
-                } else {
-                  const errData = await response.json();
-                  alert(`Failed to accept invite: ${errData.detail || "Unknown error"}`);
-                  setCurrentView("landing");
-                }
-              } catch (err: any) {
-                alert(`Error accepting invite: ${err.message}`);
-                setCurrentView("landing");
-              }
-            } else {
-              setIsAuthenticated(true); // Will render the CreateChamberOnboarding screen
-            }
-          }
-        } catch (error) {
-          console.error("Error loading auth claims:", error);
+    const loadUserData = async (userId: string, email?: string) => {
+      try {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("full_name, role, chamber_id")
+          .eq("id", userId)
+          .single();
+
+        if (profileError) {
+          console.error("Error loading profile:", profileError.message);
           setIsAuthenticated(false);
+          return;
+        }
+
+        setUserName(profile?.full_name || email || null);
+        setCurrentRole(normalizeRole(profile?.role));
+        setChamberId(profile?.chamber_id || null);
+        setIsAuthenticated(true);
+      } catch (error) {
+        console.error("Error loading user data:", error);
+        setIsAuthenticated(false);
+      }
+    };
+
+    const initialiseAuth = async () => {
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
+
+      if (error) {
+        console.error("Error loading session:", error.message);
+        setIsAuthenticated(false);
+        setIsLoadingClaims(false);
+        return;
+      }
+
+      if (session?.user) {
+        await loadUserData(
+          session.user.id,
+          session.user.email
+        );
+
+        if (
+          new URLSearchParams(window.location.search).get("auth") === "verified"
+        ) {
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
         }
       } else {
         setIsAuthenticated(false);
         setChamberId(null);
         setUserName(null);
       }
+
+      setIsLoadingClaims(false);
+    };
+
+    initialiseAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setTimeout(() => {
+          loadUserData(
+            session.user.id,
+            session.user.email
+          );
+        }, 0);
+      } else {
+        setIsAuthenticated(false);
+        setChamberId(null);
+        setUserName(null);
+        setCurrentRole("Senior");
+      }
+
       setIsLoadingClaims(false);
     });
-    return () => unsubscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
   const isDraftDestination = true;
   const routerConfidence = "High";
   const strictSynthesis = true;
 
   const sidebarItems = [
-    ...(currentRole === "Intern" 
+    ...(currentRole === "Intern"
       ? [{ id: "internWorkspace", label: "Intern Workspace", icon: LayoutDashboard }]
       : [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }]),
     { id: "workspace", label: "Legal Intelligence", icon: Search },
@@ -212,7 +245,7 @@ export default function App() {
   ];
 
   const getProfileData = () => {
-    const initials = userName 
+    const initials = userName
       ? userName.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()
       : undefined;
 
@@ -245,20 +278,25 @@ export default function App() {
       return (
         <Login
           onLoginSuccess={async (role, name) => {
-            const user = auth.currentUser;
-            if (user) {
-              const tokenResult = await user.getIdTokenResult(true);
-              const cid = tokenResult.claims.chamber_id as string | undefined;
-              if (cid) {
-                setChamberId(cid);
-                setCurrentRole(normalizeRole(tokenResult.claims.role as string || role));
-                setUserName(user.displayName || name || null);
-                setIsAuthenticated(true);
-                setCurrentView("dashboard");
-              } else {
-                setUserName(user.displayName || name || null);
-                setIsAuthenticated(true);
-              }
+            const {
+              data: { user },
+            } = await supabase.auth.getUser();
+
+            if (!user) return;
+
+            const { data: profile } = await supabase
+              .from("profiles")
+              .select("full_name, role, chamber_id")
+              .eq("id", user.id)
+              .single();
+
+            setUserName(profile?.full_name || name || null);
+            setCurrentRole(normalizeRole(profile?.role || role));
+            setChamberId(profile?.chamber_id || null);
+            setIsAuthenticated(true);
+
+            if (profile?.chamber_id) {
+              setCurrentView("dashboard");
             }
           }}
           onBackToLanding={() => setCurrentView("landing")}
@@ -277,9 +315,11 @@ export default function App() {
             setCurrentView("dashboard");
           }}
           onSignOut={async () => {
-            await auth.signOut();
+            await supabase.auth.signOut();
             setIsAuthenticated(false);
             setChamberId(null);
+            setUserName(null);
+            setCurrentRole("Senior");
             setCurrentView("landing");
           }}
         />
@@ -374,7 +414,7 @@ export default function App() {
               </button>
             </div>
           </nav>
-          
+
           <main className="flex-1 w-full max-w-7xl mx-auto px-6 sm:px-10 py-6 relative z-10">
             <Landing
               onNavigate={(view, authMode) => {
@@ -431,11 +471,10 @@ export default function App() {
                   <button
                     key={item.id}
                     onClick={() => setCurrentView(item.id as any)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold tracking-wide uppercase transition-all duration-200 cursor-pointer ${
-                      isActive
-                        ? "bg-primary/10 text-primary border-l-2 border-primary"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
-                    }`}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold tracking-wide uppercase transition-all duration-200 cursor-pointer ${isActive
+                      ? "bg-primary/10 text-primary border-l-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+                      }`}
                   >
                     <Icon size={16} className={isActive ? "text-primary" : "text-muted-foreground"} />
                     <span>{item.label}</span>
@@ -474,22 +513,20 @@ export default function App() {
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-0.5 truncate">{profile.role}</p>
                 </div>
               </div>
-              
+
               <div className="flex items-center gap-1.5 text-muted-foreground shrink-0">
                 <button
                   onClick={() => setCurrentView("settings")}
-                  className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${
-                    currentView === "settings" ? "text-primary bg-primary/10" : ""
-                  }`}
+                  className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${currentView === "settings" ? "text-primary bg-primary/10" : ""
+                    }`}
                   title="Settings"
                 >
                   <Settings size={15} />
                 </button>
                 <button
                   onClick={() => setCurrentView("billing")}
-                  className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${
-                    currentView === "billing" ? "text-primary bg-primary/10" : ""
-                  }`}
+                  className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${currentView === "billing" ? "text-primary bg-primary/10" : ""
+                    }`}
                   title="Billing"
                 >
                   <Receipt size={15} />
@@ -511,7 +548,7 @@ export default function App() {
               <ScalesOfJustice className="w-6 h-6 text-primary" />
               <span className="text-sm font-bold tracking-widest text-foreground uppercase">Vakeel</span>
             </div>
-            
+
             <div className="flex items-center gap-3">
               <span className="text-[10px] px-2 py-0.5 bg-primary/10 border border-primary/20 rounded text-primary uppercase font-bold tracking-wide">
                 {currentView}
@@ -558,11 +595,10 @@ export default function App() {
                           setCurrentView(item.id as any);
                           setIsSidebarOpen(false);
                         }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold tracking-wide uppercase transition-all duration-200 cursor-pointer ${
-                          isActive
-                            ? "bg-primary/10 text-primary border-l-2 border-primary"
-                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
-                        }`}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-bold tracking-wide uppercase transition-all duration-200 cursor-pointer ${isActive
+                          ? "bg-primary/10 text-primary border-l-2 border-primary"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/40"
+                          }`}
                       >
                         <Icon size={16} className={isActive ? "text-primary" : "text-muted-foreground"} />
                         <span>{item.label}</span>
@@ -601,27 +637,25 @@ export default function App() {
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-0.5 truncate">{profile.role}</p>
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center gap-1.5 text-muted-foreground">
                     <button
                       onClick={() => { setCurrentView("settings"); setIsSidebarOpen(false); }}
-                      className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${
-                        currentView === "settings" ? "text-primary bg-primary/10" : ""
-                      }`}
+                      className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${currentView === "settings" ? "text-primary bg-primary/10" : ""
+                        }`}
                     >
                       <Settings size={15} />
                     </button>
                     <button
                       onClick={() => { setCurrentView("billing"); setIsSidebarOpen(false); }}
-                      className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${
-                        currentView === "billing" ? "text-primary bg-primary/10" : ""
-                      }`}
+                      className={`p-1.5 hover:text-primary hover:bg-secondary/50 rounded transition-colors cursor-pointer ${currentView === "billing" ? "text-primary bg-primary/10" : ""
+                        }`}
                     >
                       <Receipt size={15} />
                     </button>
                     <button
                       onClick={async () => {
-                        await auth.signOut();
+                        await supabase.auth.signOut();
                         setIsAuthenticated(false);
                         setChamberId(null);
                         setCurrentView("landing");
@@ -683,9 +717,9 @@ export default function App() {
               {currentView === "calendar" && <SmartCalendar language={language} />}
               {currentView === "interns" && currentRole !== "Intern" && <InternDashboard language={language} />}
               {currentView === "settings" && (
-                <SettingsConfiguration 
-                  chamberId={chamberId} 
-                  onProfileUpdate={(newName) => setUserName(newName)} 
+                <SettingsConfiguration
+                  chamberId={chamberId}
+                  onProfileUpdate={(newName) => setUserName(newName)}
                 />
               )}
               {currentView === "billing" && <BillingInvoicing />}

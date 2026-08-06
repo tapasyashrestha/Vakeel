@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { auth } from "../firebase";
+import { useEffect, useState } from "react";
+import { supabase } from "../supabase";
 import { ScalesOfJustice } from "./LegalIcons";
 import { LogOut, ArrowRight, ShieldAlert } from "lucide-react";
 
@@ -13,9 +13,22 @@ export function CreateChamberOnboarding({ onChamberCreated, onSignOut }: CreateC
   const [barNumber, setBarNumber] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  useEffect(() => {
+    const loadUser = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      setUserEmail(user?.email ?? null);
+    };
+
+    loadUser();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (!chamberName.trim()) {
       setError("Chamber Name is required.");
       return;
@@ -25,44 +38,64 @@ export function CreateChamberOnboarding({ onChamberCreated, onSignOut }: CreateC
     setError("");
 
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        setError("User not authenticated.");
-        setIsLoading(false);
-        return;
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        throw new Error("User not authenticated.");
       }
 
-      const token = await user.getIdToken();
-      const response = await fetch("http://localhost:8000/chambers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: chamberName,
-          bar_number: barNumber || null
+      // Create the chamber
+      const { data: chamber, error: chamberError } = await supabase
+        .from("chambers")
+        .insert({
+          name: chamberName.trim(),
+          owner_id: user.id,
         })
-      });
+        .select("id")
+        .single();
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.detail || "Failed to create chamber");
+      if (chamberError) {
+        throw chamberError;
       }
 
-      const data = await response.json();
-      
-      // Force refresh user ID token so client receives the new claims
-      await user.getIdToken(true);
-      
-      onChamberCreated(data.chamber_id, data.role);
+      // Add creator as chamber member
+      const { error: memberError } = await supabase
+        .from("chamber_members")
+        .insert({
+          chamber_id: chamber.id,
+          user_id: user.id,
+          role: "Senior",
+        });
+
+      if (memberError) {
+        throw memberError;
+      }
+
+      // Connect profile with newly created chamber
+      const { error: profileError } = await supabase
+        .from("profiles")
+        .update({
+          chamber_id: chamber.id,
+          role: "Senior",
+          bar_number: barNumber.trim() || null,
+        })
+        .eq("id", user.id);
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      onChamberCreated(chamber.id, "Senior");
     } catch (err: any) {
+      console.error("Chamber creation error:", err);
       setError(err.message || "Failed to create chamber.");
     } finally {
       setIsLoading(false);
     }
   };
-
   return (
     <div className="min-h-screen w-full bg-[#1a1408] text-[#f0e8d0] flex items-center justify-center p-4 relative overflow-hidden font-sans">
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
@@ -127,7 +160,9 @@ export function CreateChamberOnboarding({ onChamberCreated, onSignOut }: CreateC
         </form>
 
         <div className="border-t border-[#c9a84c]/10 pt-4 flex justify-between items-center text-[10px] font-mono">
-          <span className="text-[#c2b69a]/40">{auth.currentUser?.email}</span>
+          <span className="text-[#c2b69a]/40">
+            {userEmail}
+          </span>
           <button
             onClick={onSignOut}
             className="text-red-400 hover:text-red-300 flex items-center gap-1 cursor-pointer transition-colors"

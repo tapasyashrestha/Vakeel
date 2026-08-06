@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "../firebase";
+import { supabase } from "../supabase";
 import { FolderOpen, Search, Eye, Download, Trash, Shield, Lock, FileText, User, Upload } from "lucide-react";
 
 // IndexedDB utility functions for local prototype file storage
@@ -201,54 +199,137 @@ export function DocumentRepository({ chamberId, currentRole = "Senior", language
   const [files, setFiles] = useState<ChamberFile[]>([]);
 
   useEffect(() => {
-    if (!chamberId) return;
-    const unsubscribe = onSnapshot(collection(db, "chambers", chamberId, "documents"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChamberFile));
-      setFiles(data);
-    });
-    return () => unsubscribe();
+    if (!chamberId) {
+      setFiles([]);
+      return;
+    }
+
+    const loadDocuments = async () => {
+      const { data, error } = await supabase
+        .from("documents")
+        .select("*")
+        .eq("chamber_id", chamberId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      setFiles(
+        (data ?? []).map((doc) => ({
+          id: doc.id,
+          name: doc.title,
+          size: doc.size,
+          type: doc.category,
+          uploader: doc.uploader,
+          isPrivate: doc.is_private,
+          dateAdded: doc.created_at?.split("T")[0],
+          storagePath: doc.file_path,
+        }))
+      );
+    };
+
+    loadDocuments();
+
+    const channel = supabase
+      .channel(`documents-${chamberId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "documents",
+          filter: `chamber_id=eq.${chamberId}`,
+        },
+        loadDocuments
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [chamberId]);
 
   const filteredFiles = files.filter((f) => {
-    const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          f.type.toLowerCase().includes(searchQuery.toLowerCase());
-    
+    const matchesSearch = f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      f.type.toLowerCase().includes(searchQuery.toLowerCase());
+
     // Enforce Role Level Security: Interns cannot see private files!
     const isVisibleByRole = currentRole !== "Intern" || !f.isPrivate;
 
-    const matchesTab = activeTab === "All" || 
-                       (activeTab === "Public" && !f.isPrivate) || 
-                       (activeTab === "Private" && f.isPrivate);
+    const matchesTab = activeTab === "All" ||
+      (activeTab === "Public" && !f.isPrivate) ||
+      (activeTab === "Private" && f.isPrivate);
     return matchesSearch && isVisibleByRole && matchesTab;
   });
 
-  const handleDelete = async (id: string, isLocal?: boolean) => {
+  const handleDelete = async (
+    id: string,
+    isLocal?: boolean,
+    storagePath?: string
+  ) => {
     if (!chamberId) return;
+
     try {
-      await deleteDoc(doc(db, "chambers", chamberId, "documents", id));
+      if (storagePath) {
+        const { error: storageError } = await supabase.storage
+          .from("documents")
+          .remove([storagePath]);
+
+        if (storageError) {
+          console.error("Storage delete error:", storageError.message);
+        }
+      }
+
+      const { error: databaseError } = await supabase
+        .from("documents")
+        .delete()
+        .eq("id", id)
+        .eq("chamber_id", chamberId);
+
+      if (databaseError) {
+        throw databaseError;
+      }
+
       if (isLocal) {
-        await deleteLocalFile(id).catch(err => console.warn("Failed to delete local file:", err));
+        await deleteLocalFile(id).catch((err) =>
+          console.warn("Failed to delete local file:", err)
+        );
       }
     } catch (error) {
-      console.error(error);
+      console.error("Delete error:", error);
+      alert("Failed to delete document.");
     }
   };
 
-  const handleTogglePrivacy = async (id: string, currentStatus: boolean) => {
+  const handleTogglePrivacy = async (
+    id: string,
+    currentStatus: boolean
+  ) => {
     if (!chamberId) return;
+
     try {
-      await updateDoc(doc(db, "chambers", chamberId, "documents", id), {
-        isPrivate: !currentStatus
-      });
+      const { error } = await supabase
+        .from("documents")
+        .update({
+          is_private: !currentStatus,
+        })
+        .eq("id", id)
+        .eq("chamber_id", chamberId);
+
+      if (error) {
+        throw error;
+      }
     } catch (error) {
-      console.error(error);
+      console.error("Privacy update error:", error);
       alert("Failed to update privacy status.");
     }
   };
 
   const handleViewFile = async (file: ChamberFile, forceDownload = false) => {
     try {
-      let fileUrl = file.url;
+      let fileUrl: string | undefined;
       let blob: Blob | null = null;
 
       if (file.isLocal) {
@@ -259,6 +340,17 @@ export function DocumentRepository({ chamberId, currentRole = "Senior", language
           alert(`This document is stored locally in IndexedDB but was not found. It might have been uploaded from another browser or cleared.`);
           return;
         }
+      }
+      if (!file.isLocal && file.storagePath) {
+        const { data, error } = await supabase.storage
+          .from("documents")
+          .createSignedUrl(file.storagePath, 60);
+
+        if (error) {
+          throw error;
+        }
+
+        fileUrl = data.signedUrl;
       }
 
       if (!fileUrl) {
@@ -274,7 +366,7 @@ export function DocumentRepository({ chamberId, currentRole = "Senior", language
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        
+
         // Revoke the object URL if it was created locally
         if (file.isLocal) {
           setTimeout(() => URL.revokeObjectURL(fileUrl!), 100);
@@ -305,7 +397,7 @@ export function DocumentRepository({ chamberId, currentRole = "Senior", language
     const name = file.name;
     const sizeInMB = (file.size / (1024 * 1024)).toFixed(1);
     const sizeStr = parseFloat(sizeInMB) > 0.1 ? `${sizeInMB} MB` : `${Math.round(file.size / 1024)} KB`;
-    
+
     let docType = "Chamber File";
     if (name.toLowerCase().includes("invoice") || name.toLowerCase().includes("bill")) {
       docType = "Internal Memo";
@@ -318,39 +410,80 @@ export function DocumentRepository({ chamberId, currentRole = "Senior", language
     }
 
     try {
-      let downloadURL = "";
       let storagePath = "";
-      
+
       try {
-        // Try uploading to Firebase Storage under tenant-isolated path
-        const storageRef = ref(storage, `chambers/${chamberId}/documents/${Date.now()}_${name}`);
-        const uploadResult = await uploadBytes(storageRef, file);
-        downloadURL = await getDownloadURL(uploadResult.ref);
-        storagePath = uploadResult.ref.fullPath;
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) {
+          throw new Error("User not authenticated.");
+        }
+
+        const safeFileName = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+        storagePath =
+          `chambers/${chamberId}/documents/` +
+          `${Date.now()}_${safeFileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("documents")
+          .upload(storagePath, file, {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: file.type || undefined,
+          });
+
+        if (uploadError) {
+          throw uploadError;
+        }
       } catch (storageError) {
-        console.warn("Firebase Storage failed, falling back to local IndexedDB storage:", storageError);
+        console.warn(
+          "Supabase Storage failed, falling back to IndexedDB:",
+          storageError
+        );
+
+        storagePath = "";
       }
 
-      const newFile: any = {
-        name: name,
-        size: sizeStr,
-        type: docType,
-        uploader: currentRole,
-        isPrivate: isPrivate,
-        dateAdded: new Date().toISOString().split("T")[0]
-      };
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      if (downloadURL) {
-        newFile.url = downloadURL;
-        newFile.storagePath = storagePath;
-      } else {
-        newFile.isLocal = true;
+      if (!user) {
+        throw new Error("User not authenticated.");
       }
-      
-      const docRef = await addDoc(collection(db, "chambers", chamberId, "documents"), newFile);
 
-      if (!downloadURL) {
-        await storeLocalFile(docRef.id, file);
+      const { data: insertedDocument, error: insertError } =
+        await supabase
+          .from("documents")
+          .insert({
+            chamber_id: chamberId,
+            uploaded_by: user.id,
+            title: name,
+            file_name: name,
+            file_path: storagePath || null,
+            category: docType,
+            size: sizeStr,
+            uploader: currentRole,
+            is_private: isPrivate,
+          })
+          .select("id")
+          .single();
+
+      if (insertError) {
+        if (storagePath) {
+          await supabase.storage
+            .from("documents")
+            .remove([storagePath]);
+        }
+
+        throw insertError;
+      }
+
+      if (!storagePath) {
+        await storeLocalFile(insertedDocument.id, file);
       }
 
       alert(`File "${name}" uploaded successfully!`);
@@ -408,11 +541,10 @@ export function DocumentRepository({ chamberId, currentRole = "Senior", language
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-1.5 rounded-md transition-all font-bold cursor-pointer ${
-                activeTab === tab
-                  ? "bg-[#c9a84c]/25 text-[#f0e8d0] border border-[#c9a84c]/30"
-                  : "text-[#c2b69a]/50 hover:text-[#f0e8d0]"
-              }`}
+              className={`px-4 py-1.5 rounded-md transition-all font-bold cursor-pointer ${activeTab === tab
+                ? "bg-[#c9a84c]/25 text-[#f0e8d0] border border-[#c9a84c]/30"
+                : "text-[#c2b69a]/50 hover:text-[#f0e8d0]"
+                }`}
             >
               {tab === "All" ? t.allFiles : tab === "Public" ? t.publicFiles : t.privateFiles}
             </button>

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { collection, onSnapshot, addDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { supabase } from "../supabase";
 import { askLegalQuestion } from "../ai";
 import { Briefcase, Calendar, Clock, FileText, Search, User, ChevronRight, Plus, Upload, Activity } from "lucide-react";
 
@@ -12,47 +11,102 @@ export function ChamberDashboard({ chamberId, currentRole = "Senior", language =
   const [hearings, setHearings] = useState<any[]>([]);
 
   useEffect(() => {
-    if (!chamberId) return;
-    const unsubscribe = onSnapshot(collection(db, "chambers", chamberId, "hearings"), (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setHearings(data);
-    });
-    return () => unsubscribe();
+    if (!chamberId) {
+      setHearings([]);
+      return;
+    }
+
+    const loadHearings = async () => {
+      const { data, error } = await supabase
+        .from("hearings")
+        .select("*")
+        .eq("chamber_id", chamberId)
+        .order("hearing_date", { ascending: true });
+
+      if (error) {
+        console.error("Error loading hearings:", error.message);
+        return;
+      }
+
+      const formattedHearings = (data ?? []).map((hearing) => ({
+        id: hearing.id,
+        caseNo: hearing.case_no,
+        title: hearing.title,
+        court: hearing.court,
+        date: hearing.hearing_date,
+        time: hearing.hearing_time,
+        itemNo: hearing.item_no,
+        bench: hearing.bench,
+      }));
+
+      setHearings(formattedHearings);
+    };
+
+    loadHearings();
+
+    const channel = supabase
+      .channel(`hearings-${chamberId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "hearings",
+          filter: `chamber_id=eq.${chamberId}`,
+        },
+        () => {
+          loadHearings();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [chamberId]);
 
   const seedMockHearings = async () => {
+    if (!chamberId) return;
+
     const mockHearings = [
       {
-        caseNo: "WP(C) No. 29769/2026",
+        chamber_id: chamberId,
+        case_no: "WP(C) No. 29769/2026",
         title: "Apex Retailers vs State Tax Officer",
         court: "Kerala High Court",
-        date: "2026-07-02",
-        time: "10:30 AM",
-        itemNo: "24",
-        bench: "Justice K. Harilal"
+        hearing_date: "2026-07-02",
+        hearing_time: "10:30 AM",
+        item_no: "24",
+        bench: "Justice K. Harilal",
       },
       {
-        caseNo: "WA No. 841/2026",
+        chamber_id: chamberId,
+        case_no: "WA No. 841/2026",
         title: "Refex Industries vs Union of India",
         court: "Madras High Court",
-        date: "2026-07-05",
-        time: "11:45 AM",
-        itemNo: "12",
-        bench: "Chief Justice S.V. Gangapurwala"
+        hearing_date: "2026-07-05",
+        hearing_time: "11:45 AM",
+        item_no: "12",
+        bench: "Chief Justice S.V. Gangapurwala",
       },
       {
-        caseNo: "WP(C) No. 1105/2026",
+        chamber_id: chamberId,
+        case_no: "WP(C) No. 1105/2026",
         title: "Zenith Tech vs Assistant Commissioner",
         court: "Delhi High Court",
-        date: "2026-07-12",
-        time: "02:15 PM",
-        itemNo: "38",
-        bench: "Justice Yashwant Varma"
-      }
+        hearing_date: "2026-07-12",
+        hearing_time: "02:15 PM",
+        item_no: "38",
+        bench: "Justice Yashwant Varma",
+      },
     ];
-    if (!chamberId) return;
-    for (const h of mockHearings) {
-      await addDoc(collection(db, "chambers", chamberId, "hearings"), h);
+
+    const { error } = await supabase
+      .from("hearings")
+      .insert(mockHearings);
+
+    if (error) {
+      console.error("Error seeding hearings:", error.message);
     }
   };
 
@@ -60,7 +114,7 @@ export function ChamberDashboard({ chamberId, currentRole = "Senior", language =
     if (!searchQuery.trim()) return;
     setIsAskingAi(true);
     setAiResponse("Vakeel AI is analyzing your query...");
-    
+
     const response = await askLegalQuestion(searchQuery);
     setAiResponse(response);
     setIsAskingAi(false);
@@ -241,7 +295,7 @@ export function ChamberDashboard({ chamberId, currentRole = "Senior", language =
       mr: "शुभ सकाळ, ",
       bn: "শুভ সকাল, "
     }[activeLang] || "Good Morning, ";
-    
+
     const roleTitle = {
       en: currentRole === "Senior" || currentRole === "Associate" ? "Advocate " : "",
       hi: currentRole === "Senior" || currentRole === "Associate" ? "अधिवक्ता " : "",
@@ -252,7 +306,7 @@ export function ChamberDashboard({ chamberId, currentRole = "Senior", language =
 
     welcomeGreeting = `${greetingPrefix}${roleTitle}${userName}`;
   }
-  
+
   const welcomeSubtext = t.subtexts[currentRole as keyof typeof t.subtexts] || t.subtexts.Senior;
 
   return (
@@ -271,13 +325,13 @@ export function ChamberDashboard({ chamberId, currentRole = "Senior", language =
           <button onClick={seedMockHearings} className="px-4 py-2 bg-secondary/80 hover:bg-secondary border border-primary/30 text-primary hover:text-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer">
             Seed Data
           </button>
-          <button 
+          <button
             onClick={() => onNavigate && onNavigate("drafting")}
             className="px-4 py-2 bg-secondary/80 hover:bg-secondary border border-primary/30 text-primary hover:text-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer">
             <Plus size={14} />
             {t.createDraft}
           </button>
-          <button 
+          <button
             onClick={() => onNavigate && onNavigate("repository")}
             className="px-4 py-2 bg-primary hover:bg-primary/95 text-primary-foreground text-xs font-mono font-bold uppercase rounded-lg transition-all flex items-center gap-2 cursor-pointer shadow-md">
             <Upload size={14} />
@@ -354,7 +408,7 @@ export function ChamberDashboard({ chamberId, currentRole = "Senior", language =
             placeholder={t.placeholder}
             className="flex-1 px-4 py-3 bg-[#130f06] border border-primary/20 focus:border-primary rounded-lg text-sm text-foreground placeholder:text-muted-foreground/30 focus:outline-none font-sans"
           />
-          <button 
+          <button
             onClick={handleAskAI}
             disabled={isAskingAi}
             className="px-6 py-3 bg-primary text-primary-foreground font-bold uppercase tracking-wider rounded-lg hover:bg-primary/95 transition-all text-xs font-mono flex items-center justify-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50">
