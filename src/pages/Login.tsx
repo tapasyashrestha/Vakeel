@@ -131,7 +131,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
           type: "signup",
           email: verificationEmail,
           options: {
-            emailRedirectTo: `${window.location.origin}?auth=verified`,
+            emailRedirectTo: window.location.origin,
           },
         });
 
@@ -212,7 +212,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          emailRedirectTo: `${window.location.origin}?auth=verified`,
+          redirectTo: window.location.origin,
         },
       });
 

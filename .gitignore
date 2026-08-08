@@ -41,6 +41,8 @@ dist-ssr
 *.sln
 *.sw?
 .env
+# Backend environment
+/backend/.env
 # Environment variables
 .env
 .env.local
