@@ -232,28 +232,6 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
   // ----------------------
   if (isAwaitingVerification) {
     const gmailUrl = "https://mail.google.com";
-    const handleEmailOTP = async () => {
-      if (!email) {
-        alert("Please enter your email address first.");
-        return;
-      }
-
-      try {
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            shouldCreateUser: true,
-          },
-        });
-
-        if (error) throw error;
-
-        alert("Check your email! We've sent you a login code/link.");
-      } catch (error: any) {
-        console.error("Email OTP error:", error);
-        alert(error.message || "Unable to send email OTP.");
-      }
-    };
 
     return (
       <div className="min-h-screen w-full bg-[#1a1408] text-[#f0e8d0] flex items-center justify-center p-4 font-sans">
