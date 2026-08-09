@@ -232,6 +232,28 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
   // ----------------------
   if (isAwaitingVerification) {
     const gmailUrl = "https://mail.google.com";
+    const handleEmailOTP = async () => {
+      if (!email) {
+        alert("Please enter your email address first.");
+        return;
+      }
+
+      try {
+        const { error } = await supabase.auth.signInWithOtp({
+          email,
+          options: {
+            shouldCreateUser: true,
+          },
+        });
+
+        if (error) throw error;
+
+        alert("Check your email! We've sent you a login code/link.");
+      } catch (error: any) {
+        console.error("Email OTP error:", error);
+        alert(error.message || "Unable to send email OTP.");
+      }
+    };
 
     return (
       <div className="min-h-screen w-full bg-[#1a1408] text-[#f0e8d0] flex items-center justify-center p-4 font-sans">
@@ -319,6 +341,28 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
   // ----------------------
   // Normal Login Screen
   // ----------------------
+  const handleEmailOTP = async () => {
+    if (!email) {
+      alert("Please enter your email address first.");
+      return;
+    }
+
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+
+      if (error) throw error;
+
+      alert("Check your email! We've sent you a login code/link.");
+    } catch (error: any) {
+      console.error("Email OTP error:", error);
+      alert(error.message || "Unable to send email OTP.");
+    }
+  };
 
   return (
 
@@ -642,11 +686,11 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => alert("SSO Bar Association identity check is simulated.")}
+                onClick={handleEmailOTP}
                 className="py-2 px-3 border border-[#c9a84c]/20 hover:border-[#c9a84c]/50 bg-[#130f06]/40 hover:bg-[#130f06]/80 text-[#c2b69a] hover:text-[#f0e8d0] rounded-lg transition-all text-[10px] font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Key size={12} className="text-[#c9a84c]" />
-                Bar ID SSO
+                Email OTP
               </button>
               <button
                 type="button"
@@ -656,7 +700,7 @@ export function Login({ onLoginSuccess, onBackToLanding, initialIsSignUp = false
                 <svg className="w-3 h-3 text-[#c9a84c]" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.44 0-6.228-2.77-6.228-6.19s2.788-6.19 6.228-6.19c1.683 0 3.118.608 4.223 1.693l3.073-3.073C19.24 2.807 15.96 1.8 12.24 1.8 6.474 1.8 1.8 6.474 1.8 12.24s4.674 10.44 10.44 10.44c6.19 0 10.44-4.35 10.44-10.44 0-.705-.084-1.385-.24-1.955H12.24z" />
                 </svg>
-                Google SSO
+                Google
               </button>
             </div>
 
